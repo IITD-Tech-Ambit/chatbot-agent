@@ -1,0 +1,64 @@
+"""search_papers tool — semantic search over IIT Delhi research papers."""
+
+from __future__ import annotations
+
+import json
+from typing import Optional
+
+from langchain_core.tools import tool
+from pydantic import BaseModel, Field
+
+
+class SearchPapersArgs(BaseModel):
+    query: str = Field(description="Research topic or question to search for")
+    year_from: Optional[int] = Field(default=None, description="Only papers published in or after this year")
+    year_to: Optional[int] = Field(default=None, description="Only papers published in or before this year")
+
+
+@tool(args_schema=SearchPapersArgs)
+async def search_papers(query: str, year_from: int | None = None, year_to: int | None = None) -> str:
+    """Semantic search over IIT Delhi research papers. Use for questions about research content, findings, or topics."""
+    from agent.tools._registry import get_retriever, get_config
+
+    retriever = get_retriever()
+    cfg = get_config()
+
+    try:
+        papers = await retriever.retrieve(query, abstract_max_chars=150)
+    except Exception as exc:
+        return json.dumps({"papers": [], "error": f"Retrieval failed: {type(exc).__name__}"})
+
+    if year_from:
+        papers = [p for p in papers if p.get("publication_year") is None or p["publication_year"] >= year_from]
+    if year_to:
+        papers = [p for p in papers if p.get("publication_year") is None or p["publication_year"] <= year_to]
+
+    for i, p in enumerate(papers):
+        p["citation_index"] = i + 1
+
+    result = {
+        "papers": [
+            {
+                "citation_index": p["citation_index"],
+                "id": p.get("id", ""),
+                "title": p["title"],
+                "authors": p["authors"][:3],
+                "year": p.get("publication_year"),
+                "document_type": p.get("document_type"),
+                "field": p.get("field_associated"),
+                "citations": p.get("citation_count", 0),
+                "link": p.get("link"),
+                "document_scopus_id": p.get("document_scopus_id"),
+                "document_eid": p.get("document_eid"),
+                "abstract": p["abstract"],
+            }
+            for p in papers
+        ]
+    }
+
+    cap = cfg.TOKEN_CAP_SEARCH_PAPERS
+    output = json.dumps(result, default=str)
+    while len(output) > cap and result["papers"]:
+        result["papers"].pop()
+        output = json.dumps(result, default=str)
+    return output
