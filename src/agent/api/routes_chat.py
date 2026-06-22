@@ -26,6 +26,7 @@ from agent.api.sse_events import (
 )
 from agent.api.chart_builder import build_chart_for_tool
 from agent.config import settings
+from agent import metrics as _metrics
 from agent.guardrails.guardrails import (
     sanitize_message,
     classify_meta,
@@ -145,6 +146,7 @@ async def chat(request: Request, body: ChatRequest) -> StreamingResponse:
     cached = await llm_cache.get(message)
     if cached:
         async def _cached_stream() -> AsyncGenerator[str, None]:
+            _metrics.CHATBOT_LLM_REQUESTS_TOTAL.labels(outcome="cached").inc()
             if cached.get("sources"):
                 yield _sse("sources", cached["sources"])
             if cached.get("chart"):
@@ -183,6 +185,7 @@ async def chat(request: Request, body: ChatRequest) -> StreamingResponse:
         collected_sources: list[dict] = []
         collected_chart: dict | None = None
         active_tool: str | None = None
+        first_token_recorded = False
 
         try:
             async for ev in graph.astream_events(initial_state, version="v2"):
@@ -192,6 +195,7 @@ async def chat(request: Request, body: ChatRequest) -> StreamingResponse:
 
                 if kind == "on_tool_start":
                     active_tool = name
+                    _metrics.CHATBOT_TOOL_CALLS_TOTAL.labels(tool=name).inc()
                     label = _thinking_label(name)
                     yield _sse("thinking", ThinkingEvent(
                         step=label, detail=None
@@ -250,10 +254,17 @@ async def chat(request: Request, body: ChatRequest) -> StreamingResponse:
                     if chunk:
                         token = getattr(chunk, "content", "")
                         if token:
+                            if not first_token_recorded:
+                                _metrics.CHATBOT_TIME_TO_FIRST_TOKEN_SECONDS.observe(
+                                    time.time() - start_time
+                                )
+                                first_token_recorded = True
                             yield _sse("token", TokenEvent(text=token).model_dump())
                             collected_answer += token
 
             took_ms = int((time.time() - start_time) * 1000)
+            _metrics.CHATBOT_CHAT_DURATION_SECONDS.observe(took_ms / 1000)
+            _metrics.CHATBOT_LLM_REQUESTS_TOTAL.labels(outcome="success").inc()
             yield _sse("done", DoneEvent(took_ms=took_ms).model_dump())
 
             if collected_answer.strip():
@@ -265,6 +276,7 @@ async def chat(request: Request, body: ChatRequest) -> StreamingResponse:
 
         except Exception as e:
             logger.error("Chat stream error: %s", e, exc_info=True)
+            _metrics.CHATBOT_LLM_REQUESTS_TOTAL.labels(outcome="error").inc()
             yield _sse("error", ErrorEvent(message="Something went wrong. Please try again.").model_dump())
 
     return StreamingResponse(

@@ -24,10 +24,9 @@ FROM python:3.13-slim AS runtime
 # Don't write .pyc files; force unbuffered stdout/stderr
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    # Prevent pip from running as root inside the container at runtime
     PIP_NO_CACHE_DIR=1 \
-    # Put site-packages on the path (installed into the default prefix in builder)
-    PATH="/usr/local/bin:$PATH"
+    PATH="/usr/local/bin:$PATH" \
+    PYTHONPATH="/app/src"
 
 WORKDIR /app
 
