@@ -44,6 +44,8 @@ class SourcePaper(BaseModel):
     field_associated: str | None = None
     citation_count: int = 0
     link: str | None = None
+    kerberos: str | None = None
+    faculty_name: str | None = None
 
 
 # ── Chart payloads ──

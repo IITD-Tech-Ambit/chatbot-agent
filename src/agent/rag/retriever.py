@@ -114,5 +114,6 @@ class Retriever:
                 "link": doc.get("link"),
                 "document_scopus_id": doc.get("document_scopus_id"),
                 "document_eid": doc.get("document_eid"),
+                "kerberos": doc.get("kerberos"),
             })
         return results

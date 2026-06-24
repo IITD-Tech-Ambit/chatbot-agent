@@ -8,10 +8,31 @@ from __future__ import annotations
 import logging
 import re
 from typing import Any
+from urllib.parse import quote as _url_quote
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_paper_url(p: dict[str, Any]) -> str | None:
+    """Pick the best public URL for a paper (Scholar > Scopus ID > EID > raw link)."""
+    link = p.get("link") or ""
+    scopus_id = str(p.get("document_scopus_id") or "")
+    eid = str(p.get("document_eid") or "")
+
+    def _is_scholar(s: str) -> bool:
+        return s.startswith("scholar_")
+
+    if "scholar.google.com" in link:
+        return link
+    if scopus_id and not _is_scholar(scopus_id):
+        return f"https://www.scopus.com/pages/publications/{scopus_id}?origin=resultslist"
+    if eid and not _is_scholar(eid):
+        return f"https://www.scopus.com/record/display.uri?eid={_url_quote(eid, safe='')}&origin=resultslist"
+    if link and not re.search(r"/api/documents/", link, re.IGNORECASE):
+        return link
+    return None
 
 
 class ResearchRepository:
@@ -30,7 +51,7 @@ class ResearchRepository:
             "title": 1, "abstract": 1, "authors": 1,
             "publication_year": 1, "document_type": 1,
             "field_associated": 1, "citation_count": 1, "link": 1,
-            "document_scopus_id": 1, "document_eid": 1,
+            "document_scopus_id": 1, "document_eid": 1, "kerberos": 1,
         }
         cursor = self._coll.find({"_id": {"$in": oids}}, projection)
         docs = await cursor.to_list(length=len(oids))
@@ -48,7 +69,10 @@ class ResearchRepository:
 
     async def find_top_cited(self, match: dict, limit: int = 5) -> list[dict[str, Any]]:
         cursor = (
-            self._coll.find(match, {"title": 1, "publication_year": 1, "citation_count": 1})
+            self._coll.find(match, {
+                "title": 1, "publication_year": 1, "citation_count": 1,
+                "link": 1, "document_scopus_id": 1, "document_eid": 1,
+            })
             .sort("citation_count", -1)
             .limit(limit)
         )
@@ -98,7 +122,12 @@ class ResearchRepository:
                 for b in top_fields if b["_id"]
             ],
             "most_cited_papers": [
-                {"title": p.get("title"), "year": p.get("publication_year"), "citations": p.get("citation_count")}
+                {
+                    "title": p.get("title"),
+                    "year": p.get("publication_year"),
+                    "citations": p.get("citation_count"),
+                    "url": _resolve_paper_url(p),
+                }
                 for p in top_papers
             ],
         }

@@ -238,6 +238,8 @@ async def chat(request: Request, body: ChatRequest) -> StreamingResponse:
                                         "link": p.get("link"),
                                         "document_scopus_id": p.get("document_scopus_id"),
                                         "document_eid": p.get("document_eid"),
+                                        "kerberos": p.get("kerberos"),
+                                        "faculty_name": p.get("faculty_name"),
                                     })
                             if deduped and not sources_emitted:
                                 yield _sse("sources", deduped)

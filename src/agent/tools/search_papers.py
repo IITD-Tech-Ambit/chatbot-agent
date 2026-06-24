@@ -7,6 +7,7 @@ from typing import Optional
 
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
+from agent.repositories.research_repo import _resolve_paper_url
 
 
 class SearchPapersArgs(BaseModel):
@@ -20,7 +21,9 @@ async def search_papers(query: str, year_from: int | None = None, year_to: int |
     """Semantic search over IIT Delhi research papers. Use for questions about research content, findings, or topics."""
     from agent.tools._registry import get_retriever, get_config
 
+    from agent.tools._registry import get_faculty_repo
     retriever = get_retriever()
+    faculty_repo = get_faculty_repo()
     cfg = get_config()
 
     try:
@@ -36,6 +39,10 @@ async def search_papers(query: str, year_from: int | None = None, year_to: int |
     for i, p in enumerate(papers):
         p["citation_index"] = i + 1
 
+    # Batch-resolve IIT Delhi faculty names from kerberos IDs on each paper
+    kerberoses = [p["kerberos"] for p in papers if p.get("kerberos")]
+    faculty_map = await faculty_repo.get_kerberos_to_faculty_map(kerberoses) if kerberoses else {}
+
     result = {
         "papers": [
             {
@@ -50,6 +57,9 @@ async def search_papers(query: str, year_from: int | None = None, year_to: int |
                 "link": p.get("link"),
                 "document_scopus_id": p.get("document_scopus_id"),
                 "document_eid": p.get("document_eid"),
+                "url": _resolve_paper_url(p),
+                "kerberos": p.get("kerberos"),
+                "faculty_name": faculty_map.get(p.get("kerberos", ""), {}).get("name"),
                 "abstract": p["abstract"],
             }
             for p in papers

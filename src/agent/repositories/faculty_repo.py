@@ -141,6 +141,37 @@ class FacultyRepository:
 
     # ── Kerberos → department name map (for paper attribution) ──
 
+    async def get_kerberos_to_faculty_map(self, kerberoses: list[str]) -> dict[str, dict[str, str]]:
+        """Batch-fetch {kerberos: {name, department}} for a list of kerberos IDs."""
+        if not kerberoses:
+            return {}
+        unique = list({k for k in kerberoses if k})
+        or_clauses = [{"email": re.compile(f"^{re.escape(k)}@", re.IGNORECASE)} for k in unique]
+        cursor = self._faculty.find(
+            {"$or": or_clauses},
+            {"email": 1, "firstName": 1, "lastName": 1, "title": 1, "department": 1},
+        )
+        docs = await cursor.to_list(length=len(unique) * 2)
+
+        dept_ids = {d["department"] for d in docs if isinstance(d.get("department"), ObjectId)}
+        dept_name_map: dict[ObjectId, str] = {}
+        if dept_ids:
+            cursor2 = self._departments.find({"_id": {"$in": list(dept_ids)}}, {"name": 1})
+            dept_docs = await cursor2.to_list(length=500)
+            dept_name_map = {d["_id"]: d.get("name", "") for d in dept_docs}
+
+        result: dict[str, dict[str, str]] = {}
+        for doc in docs:
+            k = (doc.get("email") or "").split("@")[0].lower().strip()
+            if not k or k not in unique:
+                continue
+            name_parts = [doc.get("title", ""), doc.get("firstName", ""), doc.get("lastName", "")]
+            name = " ".join(p for p in name_parts if p).strip()
+            dept_id = doc.get("department")
+            dept = dept_name_map.get(dept_id, "") if isinstance(dept_id, ObjectId) else ""
+            result[k] = {"name": name, "department": dept}
+        return result
+
     async def get_kerberos_to_dept_map(self) -> dict[str, str]:
         """Build {kerberos_prefix: department_name} for all faculty.
 

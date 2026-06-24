@@ -130,6 +130,9 @@ async def find_faculty_for_topic(topic: str, department: str | None = None) -> s
         if not resolved_dept:
             resolved_dept = f.get("department")
 
+        email = doc.get("email") if doc else None
+        kerberos = (email or "").split("@")[0].lower() or None
+
         faculty_list.append({
             "name": (
                 f"{doc.get('title', '')} {doc.get('firstName', '')} {doc.get('lastName', '')}".strip()
@@ -137,7 +140,9 @@ async def find_faculty_for_topic(topic: str, department: str | None = None) -> s
             ),
             "department": resolved_dept,
             "designation": doc.get("designation") if doc else None,
-            "email": doc.get("email") if doc else None,
+            "email": email,
+            "kerberos": kerberos,
+            "profile_url": f"/faculty/{kerberos}" if kerberos else None,
             "expertise": expertise,
             "relevant_paper_count": f.get("paper_count", 0),
             "h_index": doc.get("h_index") if doc else None,
