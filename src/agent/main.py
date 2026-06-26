@@ -54,6 +54,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # ── RAG ──
     from agent.rag.embeddings import EmbeddingClient
+    from agent.rag.query_parser import QueryParser
     from agent.rag.retriever import Retriever
 
     embedding_client = EmbeddingClient(
@@ -64,12 +65,25 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     )
     app.state.embedding_client = embedding_client
 
+    if settings.GROQ_API_KEY:
+        query_parser = QueryParser(
+            api_key=settings.GROQ_API_KEY,
+            model=settings.GROQ_EXTRACT_MODEL,
+        )
+    else:
+        query_parser = None
+        logger.warning(
+            "GROQ_API_KEY not set — QueryParser disabled; faculty/dept kerberos filtering will not work"
+        )
+
     retriever = Retriever(
         opensearch=os_client,
         index_name=settings.OPENSEARCH_INDEX,
         research_repo=research_repo,
         embedding_client=embedding_client,
         top_k=settings.CHAT_TOP_K,
+        faculty_repo=faculty_repo,
+        query_parser=query_parser,
     )
 
     # ── Tool registry ──

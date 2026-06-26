@@ -58,6 +58,35 @@ class EmbeddingClient:
 
         return embedding
 
+    async def rerank(
+        self,
+        query: str,
+        documents: list[str],
+        top_n: int | None = None,
+    ) -> list[tuple[int, float]]:
+        """Call the BGE cross-encoder reranker.
+
+        Returns (original_index, score) pairs sorted by score descending.
+        Returns [] when the reranker is unavailable or errors out.
+        """
+        if not documents:
+            return []
+        payload: dict[str, Any] = {"query": query, "documents": documents}
+        if top_n is not None:
+            payload["top_n"] = top_n
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                resp = await client.post(f"{self._base_url}/rerank", json=payload)
+                if resp.status_code == 404:
+                    logger.debug("Reranker endpoint not available (404)")
+                    return []
+                resp.raise_for_status()
+                results = resp.json().get("results", [])
+                return [(r["index"], r["score"]) for r in results]
+        except Exception as exc:
+            logger.debug("Rerank failed: %s", exc)
+            return []
+
     async def health(self) -> bool:
         try:
             async with httpx.AsyncClient(timeout=2.0) as client:

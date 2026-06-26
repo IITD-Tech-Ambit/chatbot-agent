@@ -70,6 +70,8 @@ async def get_faculty_profile(name: str) -> str:
         "profile": {
             "name": f"{f.get('title', '')} {f.get('firstName', '')} {f.get('lastName', '')}".strip(),
             "email": f.get("email"),
+            "kerberos": kerberos,
+            "profile_url": f"/faculty/{kerberos}" if kerberos else None,
             "department": dept_name,
             "designation": f.get("designation"),
             "expertise": expertise,

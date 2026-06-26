@@ -2,6 +2,8 @@ __pycache__/
 *.pyc
 *.pyo
 .env
+eval/results/
+eval/fixtures/
 .venv/
 venv/
 *.egg-info/

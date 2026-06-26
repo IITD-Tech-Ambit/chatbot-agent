@@ -42,6 +42,57 @@ class FacultyRepository:
         results = await cursor.to_list(length=limit)
         return await self._populate_department(results)
 
+    async def compound_name_search(self, name_tokens: list[str], limit: int = 5) -> list[dict[str, Any]]:
+        """Precision name lookup: lastName AND firstName, falling back gracefully.
+
+        Three-stage strategy:
+          1. lastName ∩ firstName compound match — best precision
+          2. lastName-only match — still more precise than full OR
+          3. Any-token OR fallback (original regex_search behaviour)
+
+        Single-char tokens (initials like "J", "S.") use prefix regex so "J.K."
+        or "Jitendra" can still match "J".
+        """
+        if not name_tokens:
+            return []
+
+        # Strip punctuation from tokens (handles "S.", "K.", "J.K.")
+        clean = [re.sub(r"[^\w]", "", t) for t in name_tokens]
+        clean = [c for c in clean if c]
+        if not clean:
+            return await self.regex_search(name_tokens, limit=limit)
+
+        last = clean[-1]
+        firsts = clean[:-1]
+        last_re = re.compile(re.escape(last), re.IGNORECASE)
+
+        # Stage 1: compound — lastName + any firstName token
+        if firsts:
+            first_patterns = []
+            for f in firsts:
+                # Single-char or double-char initial → prefix match ("^J")
+                if len(f) <= 2:
+                    first_patterns.append(re.compile(f"^{re.escape(f)}", re.IGNORECASE))
+                else:
+                    first_patterns.append(re.compile(re.escape(f), re.IGNORECASE))
+
+            cursor = self._faculty.find({
+                "lastName": last_re,
+                "firstName": {"$in": first_patterns},
+            }).limit(limit)
+            results = await cursor.to_list(length=limit)
+            if results:
+                return await self._populate_department(results)
+
+        # Stage 2: lastName only (e.g. initials didn't match stored firstName)
+        cursor = self._faculty.find({"lastName": last_re}).limit(limit)
+        results = await cursor.to_list(length=limit)
+        if results:
+            return await self._populate_department(results)
+
+        # Stage 3: full OR fallback
+        return await self.regex_search(name_tokens, limit=limit)
+
     # ── Faculty by expert_id list ──
 
     async def find_by_expert_ids(self, expert_ids: list[str]) -> list[dict[str, Any]]:
@@ -140,6 +191,37 @@ class FacultyRepository:
         return await self._faculty.count_documents(match)
 
     # ── Kerberos → department name map (for paper attribution) ──
+
+    async def get_kerberos_to_faculty_map(self, kerberoses: list[str]) -> dict[str, dict[str, str]]:
+        """Batch-fetch {kerberos: {name, department}} for a list of kerberos IDs."""
+        if not kerberoses:
+            return {}
+        unique = list({k for k in kerberoses if k})
+        or_clauses = [{"email": re.compile(f"^{re.escape(k)}@", re.IGNORECASE)} for k in unique]
+        cursor = self._faculty.find(
+            {"$or": or_clauses},
+            {"email": 1, "firstName": 1, "lastName": 1, "title": 1, "department": 1},
+        )
+        docs = await cursor.to_list(length=len(unique) * 2)
+
+        dept_ids = {d["department"] for d in docs if isinstance(d.get("department"), ObjectId)}
+        dept_name_map: dict[ObjectId, str] = {}
+        if dept_ids:
+            cursor2 = self._departments.find({"_id": {"$in": list(dept_ids)}}, {"name": 1})
+            dept_docs = await cursor2.to_list(length=500)
+            dept_name_map = {d["_id"]: d.get("name", "") for d in dept_docs}
+
+        result: dict[str, dict[str, str]] = {}
+        for doc in docs:
+            k = (doc.get("email") or "").split("@")[0].lower().strip()
+            if not k or k not in unique:
+                continue
+            name_parts = [doc.get("title", ""), doc.get("firstName", ""), doc.get("lastName", "")]
+            name = " ".join(p for p in name_parts if p).strip()
+            dept_id = doc.get("department")
+            dept = dept_name_map.get(dept_id, "") if isinstance(dept_id, ObjectId) else ""
+            result[k] = {"name": name, "department": dept}
+        return result
 
     async def get_kerberos_to_dept_map(self) -> dict[str, str]:
         """Build {kerberos_prefix: department_name} for all faculty.

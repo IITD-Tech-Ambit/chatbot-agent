@@ -20,7 +20,7 @@ class LLMCache:
     def _key(self, query: str) -> str:
         normalized = query.strip().lower()
         h = hashlib.sha256(normalized.encode()).hexdigest()
-        return f"llm:v1:{h}"
+        return f"llm:v2:{h}"
 
     async def get(self, query: str) -> dict[str, Any] | None:
         if self._ttl <= 0:

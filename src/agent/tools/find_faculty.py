@@ -14,12 +14,50 @@ from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
 
+_QUERY_INDICATORS = frozenset({
+    "a", "an", "the",
+    "who", "what", "where", "which", "tell", "is", "are",
+    "working", "work", "research", "professor", "faculty",
+    "iit", "delhi", "find", "show",
+})
+
+# Department names at IIT Delhi are short proper nouns (2–5 words at most).
+# Anything longer, or containing question-mark / sentence words, is a user
+# query that the LLM accidentally forwarded — treat it as no filter.
+_MAX_DEPT_WORDS = 6
+
+
+def _sanitize_department(raw: str | None) -> str | None:
+    """Return None if `raw` looks like a query rather than a department name."""
+    if not raw:
+        return None
+    stripped = raw.strip()
+    if not stripped:
+        return None
+    words = stripped.split()
+    if len(words) > _MAX_DEPT_WORDS:
+        return None
+    lowered = stripped.lower()
+    if "?" in stripped or "." in stripped:
+        return None
+    # Reject if majority of words are query-like keywords
+    indicator_hits = sum(1 for w in words if w.lower() in _QUERY_INDICATORS)
+    if indicator_hits >= 2:
+        return None
+    return stripped
+
+
 class FindFacultyArgs(BaseModel):
-    topic: str = Field(description="Research topic to find faculty for")
+    topic: str = Field(description="Research topic or question to find faculty for")
     department: Optional[str] = Field(
         default=None,
-        description="Optional department name to filter results (e.g. 'Chemical Engineering', 'Computer Science'). "
-                    "Use when the user asks for faculty from a specific department.",
+        description=(
+            "Set ONLY when the user explicitly names a specific IIT Delhi department, centre, or school — "
+            "e.g. 'Computer Science and Engineering', 'Electrical Engineering', 'Chemical Engineering', "
+            "'Centre for Applied Research in Electronics'. "
+            "NEVER pass the user's query, a research topic, or any sentence here. "
+            "Leave null for general or cross-department topic searches."
+        ),
     )
 
 
@@ -43,11 +81,14 @@ def _serialize_faculty_doc(doc: dict[str, Any]) -> dict[str, Any]:
 @tool(args_schema=FindFacultyArgs)
 async def find_faculty_for_topic(topic: str, department: str | None = None) -> str:
     """Find IIT Delhi professors who work on a given research topic, with department, email, and paper count.
-    Pass the department parameter when the user asks about a specific department."""
+    Set department only when the user names a specific IIT Delhi department — never pass the research topic or user query as department."""
     from agent.tools._registry import get_config, get_faculty_repo
 
     cfg = get_config()
     faculty_repo = get_faculty_repo()
+
+    # Guard: reject department values that are user queries, not dept names
+    department = _sanitize_department(department)
 
     # Try search API first
     search_api_ok = True
@@ -130,6 +171,9 @@ async def find_faculty_for_topic(topic: str, department: str | None = None) -> s
         if not resolved_dept:
             resolved_dept = f.get("department")
 
+        email = doc.get("email") if doc else None
+        kerberos = (email or "").split("@")[0].lower() or None
+
         faculty_list.append({
             "name": (
                 f"{doc.get('title', '')} {doc.get('firstName', '')} {doc.get('lastName', '')}".strip()
@@ -137,7 +181,9 @@ async def find_faculty_for_topic(topic: str, department: str | None = None) -> s
             ),
             "department": resolved_dept,
             "designation": doc.get("designation") if doc else None,
-            "email": doc.get("email") if doc else None,
+            "email": email,
+            "kerberos": kerberos,
+            "profile_url": f"/faculty/{kerberos}" if kerberos else None,
             "expertise": expertise,
             "relevant_paper_count": f.get("paper_count", 0),
             "h_index": doc.get("h_index") if doc else None,
