@@ -105,13 +105,17 @@ INJECTION_PATTERNS = [
 
 # Off-topic patterns: code generation, general chat, homework, creative writing, etc.
 OFF_TOPIC_PATTERNS = [
-    # Code generation / programming requests
-    re.compile(r"\b(write|generate|create|give\s+me|show\s+me|code)\s+(\w+\s+){0,3}(python|java|javascript|c\+\+|html|css|sql|code|script|program|function|class|algorithm|poem|story|essay|song|letter|email)\b", re.I),
-    re.compile(r"\b(implement|build|develop|design)\s+(\w+\s+){0,3}(website|app|application|api|database|server|frontend|backend|system|binary\s+search|sorting|algorithm)\b", re.I),
+    # Code generation — require BOTH a language name AND a code artifact type to avoid
+    # blocking research queries like "show me papers on code generation" or
+    # "research on algorithm design" or "Papers from Electrical Engineering".
+    re.compile(r"\b(write|generate|create)\s+(\w+\s+){0,3}(python|java|javascript|c\+\+|html|css|sql)\s+(code|script|program|function|class)\b", re.I),
+    re.compile(r"\b(implement|build|develop|design)\s+(\w+\s+){0,3}(website|app|application|api|database|server|frontend|backend|algorithm|sorting)\b", re.I),
     re.compile(r"\bhow\s+to\s+(code|program|implement|build|develop|install|setup|configure|deploy)\b", re.I),
     re.compile(r"\b(debug|fix|refactor|optimize)\s+(this|my|the)\s+(code|program|script|function|bug|error)\b", re.I),
     re.compile(r"```[\s\S]*```", re.I),  # code blocks in input
-    re.compile(r"\b(import|from|def|class|function|var|let|const|return|if\s*\(|for\s*\(|while\s*\()\s", re.I),
+    # Only match unmistakable in-line code tokens (not plain English words like
+    # "from", "class", "function", "return" which appear in research queries).
+    re.compile(r"\b(import\s+\w+\s+from\b|if\s*\(|for\s*\(|while\s*\()", re.I),
 
     # Homework / exam / assignment
     re.compile(r"\b(solve|calculate|compute|evaluate|derive|prove|simplify)\s+(this|the|following|my)?\s*(equation|integral|derivative|matrix|problem|expression|formula)\b", re.I),
@@ -119,7 +123,7 @@ OFF_TOPIC_PATTERNS = [
     re.compile(r"\b(help\s+me\s+with|do\s+my)\s+(homework|assignment|exam|math|physics|chemistry)\b", re.I),
 
     # Creative writing / general chat
-    re.compile(r"\b(write|compose|create|generate)\s+(a\s+|me\s+|an?\s+)?(poem|song|story|essay|letter|email|blog|article|speech|joke|riddle)\b", re.I),
+    re.compile(r"\b(write|compose|create|generate)\s+(\w+\s+){0,2}(poem|song|story|essay|letter|blog|article|speech|joke|riddle)\b", re.I),
     re.compile(r"\b(tell\s+me\s+a\s+)(joke|story|riddle|fun\s+fact)\b", re.I),
     re.compile(r"\b(translate|convert)\s+(this|the|following)?\s*(to|into)\s+(hindi|french|spanish|german|chinese|japanese|english)\b", re.I),
 

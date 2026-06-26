@@ -13,7 +13,7 @@ from typing import Any, AsyncGenerator
 
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import StreamingResponse
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from agent.api.schemas import ChatRequest
 from agent.api.sse_events import (
@@ -164,10 +164,18 @@ async def chat(request: Request, body: ChatRequest) -> StreamingResponse:
         [t.model_dump() for t in body.history[-settings.CHAT_MAX_HISTORY_TURNS:]],
     )
 
+    def _history_msg(turn: dict):
+        role = turn.get("role", "")
+        content = turn.get("content", "")
+        if role == "user":
+            return HumanMessage(content=content)
+        if role == "assistant":
+            return AIMessage(content=content)
+        return SystemMessage(content=content)
+
     messages = [
         SystemMessage(content=system_content),
-        *[HumanMessage(content=t["content"]) if t["role"] == "user"
-          else SystemMessage(content=t["content"]) for t in history],
+        *[_history_msg(t) for t in history],
         HumanMessage(content=message),
     ]
 

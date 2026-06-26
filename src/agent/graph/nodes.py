@@ -127,7 +127,18 @@ def _enforce_context_budget(messages: list) -> list:
             content = msg.content or ""
             tool_cap = _tool_cap(msg.name)
             if len(content) > tool_cap:
-                content = content[:tool_cap] + '..."}'
+                # Pop papers from the array until it fits; never blindly slice JSON.
+                try:
+                    data = json.loads(content)
+                    papers = data.get("papers") if isinstance(data, dict) else None
+                    if isinstance(papers, list):
+                        while papers and len(json.dumps(data, default=str)) > tool_cap:
+                            papers.pop()
+                        content = json.dumps(data, default=str)
+                    else:
+                        content = '{"truncated": true}'
+                except (json.JSONDecodeError, Exception):
+                    content = '{"truncated": true}'
             total += len(content)
             if total > available:
                 content = '{"truncated": true}'

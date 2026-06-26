@@ -63,6 +63,7 @@ class Settings(BaseSettings):
     # xAI Grok LLM
     GROQ_API_KEY: str = ""
     GROQ_MODEL: str = "grok-4.3"
+    GROQ_EXTRACT_MODEL: str = "grok-3-mini"  # cheap model for query parsing
     MAX_ANSWER_TOKENS: int = 1024
 
     # Agent behaviour

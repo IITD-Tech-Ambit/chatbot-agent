@@ -42,6 +42,57 @@ class FacultyRepository:
         results = await cursor.to_list(length=limit)
         return await self._populate_department(results)
 
+    async def compound_name_search(self, name_tokens: list[str], limit: int = 5) -> list[dict[str, Any]]:
+        """Precision name lookup: lastName AND firstName, falling back gracefully.
+
+        Three-stage strategy:
+          1. lastName ∩ firstName compound match — best precision
+          2. lastName-only match — still more precise than full OR
+          3. Any-token OR fallback (original regex_search behaviour)
+
+        Single-char tokens (initials like "J", "S.") use prefix regex so "J.K."
+        or "Jitendra" can still match "J".
+        """
+        if not name_tokens:
+            return []
+
+        # Strip punctuation from tokens (handles "S.", "K.", "J.K.")
+        clean = [re.sub(r"[^\w]", "", t) for t in name_tokens]
+        clean = [c for c in clean if c]
+        if not clean:
+            return await self.regex_search(name_tokens, limit=limit)
+
+        last = clean[-1]
+        firsts = clean[:-1]
+        last_re = re.compile(re.escape(last), re.IGNORECASE)
+
+        # Stage 1: compound — lastName + any firstName token
+        if firsts:
+            first_patterns = []
+            for f in firsts:
+                # Single-char or double-char initial → prefix match ("^J")
+                if len(f) <= 2:
+                    first_patterns.append(re.compile(f"^{re.escape(f)}", re.IGNORECASE))
+                else:
+                    first_patterns.append(re.compile(re.escape(f), re.IGNORECASE))
+
+            cursor = self._faculty.find({
+                "lastName": last_re,
+                "firstName": {"$in": first_patterns},
+            }).limit(limit)
+            results = await cursor.to_list(length=limit)
+            if results:
+                return await self._populate_department(results)
+
+        # Stage 2: lastName only (e.g. initials didn't match stored firstName)
+        cursor = self._faculty.find({"lastName": last_re}).limit(limit)
+        results = await cursor.to_list(length=limit)
+        if results:
+            return await self._populate_department(results)
+
+        # Stage 3: full OR fallback
+        return await self.regex_search(name_tokens, limit=limit)
+
     # ── Faculty by expert_id list ──
 
     async def find_by_expert_ids(self, expert_ids: list[str]) -> list[dict[str, Any]]:
