@@ -42,18 +42,7 @@ async def agent_node(state: AgentState, config: RunnableConfig | None = None) ->
     response = await llm_with_tools.ainvoke(state["messages"])
 
     if not getattr(response, "tool_calls", None):
-        user_msg = _extract_user_query(state["messages"])
-        logger.info("No tool calls from LLM — forcing search_papers(%s)", user_msg[:80])
-
-        forced = AIMessage(
-            content="",
-            tool_calls=[{
-                "id": "forced_search",
-                "name": "search_papers",
-                "args": {"query": user_msg},
-            }],
-        )
-        return {"messages": [forced]}
+        return {"messages": [response]}
 
     return {"messages": [response]}
 
@@ -127,18 +116,20 @@ def _enforce_context_budget(messages: list) -> list:
             content = msg.content or ""
             tool_cap = _tool_cap(msg.name)
             if len(content) > tool_cap:
-                # Pop papers from the array until it fits; never blindly slice JSON.
                 try:
                     data = json.loads(content)
-                    papers = data.get("papers") if isinstance(data, dict) else None
-                    if isinstance(papers, list):
-                        while papers and len(json.dumps(data, default=str)) > tool_cap:
-                            papers.pop()
-                        content = json.dumps(data, default=str)
-                    else:
-                        content = '{"truncated": true}'
+                    truncated = False
+                    if isinstance(data, dict):
+                        for list_key in ("papers", "faculty", "similar_papers", "groups", "comparison", "trend", "results", "departments"):
+                            items = data.get(list_key)
+                            if isinstance(items, list):
+                                while items and len(json.dumps(data, default=str)) > tool_cap:
+                                    items.pop()
+                                truncated = True
+                                break
+                    content = json.dumps(data, default=str) if truncated else content[:tool_cap]
                 except (json.JSONDecodeError, Exception):
-                    content = '{"truncated": true}'
+                    content = content[:tool_cap]
             total += len(content)
             if total > available:
                 content = '{"truncated": true}'
@@ -159,7 +150,11 @@ def _tool_cap(name: str) -> int:
         "get_department_profile": settings.TOKEN_CAP_DEPARTMENT_PROFILE,
         "list_departments": settings.TOKEN_CAP_LIST_DEPARTMENTS,
         "find_faculty_by_expertise": settings.TOKEN_CAP_FACULTY_EXPERTISE,
+        "find_faculty_for_topic": settings.TOKEN_CAP_FACULTY_EXPERTISE,
         "find_interdisciplinary_papers": settings.TOKEN_CAP_INTERDISCIPLINARY,
         "get_top_faculty": settings.TOKEN_CAP_TOP_FACULTY,
+        "compare_faculty": settings.TOKEN_CAP_DEPARTMENT_PROFILE,
+        "find_similar_papers": settings.TOKEN_CAP_SEARCH_PAPERS,
+        "get_research_trends": settings.TOKEN_CAP_PUBLICATION_STATS,
     }
     return caps.get(name, settings.TOKEN_CAP_DEFAULT)

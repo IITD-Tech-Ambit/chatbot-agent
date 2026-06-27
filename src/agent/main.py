@@ -23,6 +23,9 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Startup: connect to all backends, build graph. Shutdown: close connections."""
 
+    if not settings.GROQ_API_KEY:
+        raise RuntimeError("GROQ_API_KEY is required but not set — cannot start without an xAI API key")
+
     # ── Data layer ──
     from agent.data import mongo, opensearch, redis as redis_mod
 
@@ -99,9 +102,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # ── LLM (xAI Grok) ──
     from agent.llm.groq_client import make_tool_llm, make_answer_llm
-
-    if not settings.GROQ_API_KEY:
-        logger.error("GROQ_API_KEY (xAI API key) not set — LLM calls will fail")
 
     tool_llm = make_tool_llm(
         api_key=settings.GROQ_API_KEY,

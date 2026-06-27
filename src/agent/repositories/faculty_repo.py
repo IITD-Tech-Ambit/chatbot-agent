@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import re
 import logging
+import time
 from typing import Any
 
 from bson import ObjectId
@@ -15,10 +16,15 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 logger = logging.getLogger(__name__)
 
 
+_KERBEROS_DEPT_CACHE_TTL = 3600
+
+
 class FacultyRepository:
     def __init__(self, db: AsyncIOMotorDatabase) -> None:
         self._faculty = db["faculties"]
         self._departments = db["departments"]
+        self._kerberos_dept_cache: dict[str, str] | None = None
+        self._kerberos_dept_cache_ts: float = 0.0
 
     # ── Faculty text search ──
 
@@ -126,7 +132,7 @@ class FacultyRepository:
         cursor = self._faculty.find(
             {"department": dept_id},
             {"email": 1, "scopus_id": 1},
-        )
+        ).limit(500)
         return await cursor.to_list(length=500)
 
     async def find_top_faculty_by_department(
@@ -224,11 +230,8 @@ class FacultyRepository:
         return result
 
     async def get_kerberos_to_dept_map(self) -> dict[str, str]:
-        """Build {kerberos_prefix: department_name} for all faculty.
-
-        Papers link to faculty via paper.kerberos == email.split('@')[0].lower().
-        Faculty link to departments via faculty.department (ObjectId).
-        """
+        if self._kerberos_dept_cache is not None and time.monotonic() - self._kerberos_dept_cache_ts < _KERBEROS_DEPT_CACHE_TTL:
+            return self._kerberos_dept_cache
         cursor = self._faculty.find({}, {"email": 1, "department": 1})
         docs = await cursor.to_list(length=5000)
 
@@ -249,6 +252,8 @@ class FacultyRepository:
             dept_name = dept_name_map.get(dept_id, "") if isinstance(dept_id, ObjectId) else ""
             if kerberos and dept_name:
                 result[kerberos] = dept_name
+        self._kerberos_dept_cache = result
+        self._kerberos_dept_cache_ts = time.monotonic()
         return result
 
     # ── List all departments ──
