@@ -5,10 +5,13 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import time
 from typing import Any
 
 import httpx
 import redis.asyncio as aioredis
+
+from agent import metrics as _metrics
 
 logger = logging.getLogger(__name__)
 
@@ -70,20 +73,27 @@ class EmbeddingClient:
         Returns [] when the reranker is unavailable or errors out.
         """
         if not documents:
+            _metrics.CHATBOT_RERANK_REQUESTS_TOTAL.labels(outcome="skipped").inc()
             return []
         payload: dict[str, Any] = {"query": query, "documents": documents}
         if top_n is not None:
             payload["top_n"] = top_n
+        t_start = time.perf_counter()
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 resp = await client.post(f"{self._base_url}/rerank", json=payload)
                 if resp.status_code == 404:
                     logger.debug("Reranker endpoint not available (404)")
+                    _metrics.CHATBOT_RERANK_REQUESTS_TOTAL.labels(outcome="skipped").inc()
                     return []
                 resp.raise_for_status()
                 results = resp.json().get("results", [])
+                _metrics.CHATBOT_RERANK_REQUESTS_TOTAL.labels(outcome="success").inc()
+                _metrics.CHATBOT_RERANK_DURATION_SECONDS.observe(time.perf_counter() - t_start)
                 return [(r["index"], r["score"]) for r in results]
         except Exception as exc:
+            _metrics.CHATBOT_RERANK_REQUESTS_TOTAL.labels(outcome="error").inc()
+            _metrics.CHATBOT_RERANK_DURATION_SECONDS.observe(time.perf_counter() - t_start)
             logger.debug("Rerank failed: %s", exc)
             return []
 

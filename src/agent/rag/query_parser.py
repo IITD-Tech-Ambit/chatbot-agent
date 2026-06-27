@@ -13,7 +13,10 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from dataclasses import dataclass
+
+from agent import metrics as _metrics
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +75,7 @@ class QueryParser:
     async def extract(self, query: str) -> ParsedQuery:
         """Extract faculty_name and department from query (cached)."""
         if query in self._cache:
+            _metrics.CHATBOT_QUERY_PARSER_REQUESTS_TOTAL.labels(outcome="cache_hit").inc()
             return self._cache[query]
 
         result = await self._call(query)
@@ -83,6 +87,7 @@ class QueryParser:
         return result
 
     async def _call(self, query: str) -> ParsedQuery:
+        t_start = time.perf_counter()
         try:
             resp = await self._client.chat.completions.create(
                 model=self._model,
@@ -94,6 +99,8 @@ class QueryParser:
                 temperature=0,
                 max_tokens=64,
             )
+            _metrics.CHATBOT_QUERY_PARSER_REQUESTS_TOTAL.labels(outcome="success").inc()
+            _metrics.CHATBOT_QUERY_PARSER_DURATION_SECONDS.observe(time.perf_counter() - t_start)
             raw = resp.choices[0].message.content or "{}"
             data = json.loads(raw)
             raw_depts = data.get("departments") or []
@@ -105,5 +112,7 @@ class QueryParser:
                 departments=departments,
             )
         except Exception as exc:
+            _metrics.CHATBOT_QUERY_PARSER_REQUESTS_TOTAL.labels(outcome="error").inc()
+            _metrics.CHATBOT_QUERY_PARSER_DURATION_SECONDS.observe(time.perf_counter() - t_start)
             logger.debug("QueryParser.extract failed for %r: %s", query, exc)
             return _NULL
