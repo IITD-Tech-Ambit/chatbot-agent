@@ -20,11 +20,10 @@ class FacultyProfileArgs(BaseModel):
 async def get_faculty_profile(name: str) -> str:
     """Look up a specific IIT Delhi professor BY NAME: email, department, expertise, and publication stats. Only use when the user names an actual person."""
     from agent.guardrails.guardrails import name_tokens, faculty_name_matches
-    from agent.tools._registry import get_faculty_repo, get_research_repo, get_config
+    from agent.tools._registry import get_faculty_repo, get_research_repo
 
     faculty_repo = get_faculty_repo()
     research_repo = get_research_repo()
-    cfg = get_config()
 
     tokens = name_tokens(name)
     if not tokens:
@@ -89,8 +88,4 @@ async def get_faculty_profile(name: str) -> str:
         ],
     }
 
-    output = json.dumps(result, default=str)
-    cap = cfg.TOKEN_CAP_FACULTY_PROFILE
-    if len(output) > cap:
-        output = output[:cap] + '..."}'
-    return output
+    return json.dumps(result, default=str)

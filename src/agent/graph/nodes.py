@@ -42,18 +42,7 @@ async def agent_node(state: AgentState, config: RunnableConfig | None = None) ->
     response = await llm_with_tools.ainvoke(state["messages"])
 
     if not getattr(response, "tool_calls", None):
-        user_msg = _extract_user_query(state["messages"])
-        logger.info("No tool calls from LLM — forcing search_papers(%s)", user_msg[:80])
-
-        forced = AIMessage(
-            content="",
-            tool_calls=[{
-                "id": "forced_search",
-                "name": "search_papers",
-                "args": {"query": user_msg},
-            }],
-        )
-        return {"messages": [forced]}
+        return {"messages": [response]}
 
     return {"messages": [response]}
 
@@ -131,7 +120,7 @@ def _enforce_context_budget(messages: list) -> list:
                     data = json.loads(content)
                     truncated = False
                     if isinstance(data, dict):
-                        for list_key in ("papers", "faculty", "departments", "results"):
+                        for list_key in ("papers", "faculty", "similar_papers", "groups", "comparison", "trend", "results", "departments"):
                             items = data.get(list_key)
                             if isinstance(items, list):
                                 while items and len(json.dumps(data, default=str)) > tool_cap:
@@ -164,7 +153,7 @@ def _tool_cap(name: str) -> int:
         "find_faculty_for_topic": settings.TOKEN_CAP_FACULTY_EXPERTISE,
         "find_interdisciplinary_papers": settings.TOKEN_CAP_INTERDISCIPLINARY,
         "get_top_faculty": settings.TOKEN_CAP_TOP_FACULTY,
-        "compare_faculty": settings.TOKEN_CAP_FACULTY_PROFILE,
+        "compare_faculty": settings.TOKEN_CAP_DEPARTMENT_PROFILE,
         "find_similar_papers": settings.TOKEN_CAP_SEARCH_PAPERS,
         "get_research_trends": settings.TOKEN_CAP_PUBLICATION_STATS,
     }

@@ -9,7 +9,7 @@ from typing import Literal, Optional
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
-from agent.tools._registry import get_faculty_repo, get_config
+from agent.tools._registry import get_faculty_repo
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,6 @@ async def get_top_faculty(
     Use this when the user asks for the 'top', 'best', 'highest', or 'most cited' professors
     at IIT Delhi, or within a specific department."""
     faculty_repo = get_faculty_repo()
-    cfg = get_config()
 
     docs = await faculty_repo.find_top_faculty_global(
         sort_by=sort_by,
@@ -71,8 +70,4 @@ async def get_top_faculty(
         "faculty": faculty_list,
     }
 
-    output = json.dumps(result, default=str)
-    cap = cfg.TOKEN_CAP_TOP_FACULTY
-    if len(output) > cap:
-        output = output[:cap] + '..."}'
-    return output
+    return json.dumps(result, default=str)

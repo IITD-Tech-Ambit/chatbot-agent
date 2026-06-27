@@ -18,18 +18,19 @@ class SimilarPapersArgs(BaseModel):
 @tool(args_schema=SimilarPapersArgs)
 async def find_similar_papers(title: str, abstract: str = "", top_k: int = 5) -> str:
     """Find papers similar to a given paper by re-embedding its title and abstract."""
-    from agent.tools._registry import get_retriever, get_config
+    from agent.tools._registry import get_retriever
 
     retriever = get_retriever()
-    cfg = get_config()
 
     combined = f"{title}. {abstract}".strip()
-    papers = await retriever.retrieve(combined, top_k=min(top_k, 10), abstract_max_chars=150)
+    try:
+        papers = await retriever.retrieve(combined, top_k=min(top_k, 10), abstract_max_chars=150)
+    except Exception as exc:
+        return json.dumps({"reference": title, "similar_papers": [], "error": f"Retrieval failed: {type(exc).__name__}"})
 
-    # Exclude the reference paper itself if it shows up
     papers = [p for p in papers if p.get("title", "").lower().strip() != title.lower().strip()]
 
-    result = {
+    return json.dumps({
         "reference": title,
         "similar_papers": [
             {
@@ -41,9 +42,4 @@ async def find_similar_papers(title: str, abstract: str = "", top_k: int = 5) ->
             }
             for p in papers[:top_k]
         ],
-    }
-    output = json.dumps(result, default=str)
-    cap = cfg.TOKEN_CAP_DEFAULT
-    if len(output) > cap:
-        output = output[:cap] + '..."}'
-    return output
+    }, default=str)

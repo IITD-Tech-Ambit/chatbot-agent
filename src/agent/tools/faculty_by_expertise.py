@@ -9,7 +9,7 @@ from typing import Optional
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
-from agent.tools._registry import get_faculty_repo, get_config
+from agent.tools._registry import get_faculty_repo
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,6 @@ async def find_faculty_by_expertise(
 ) -> str:
     """Find IIT Delhi faculty who have a specific expertise or skill listed in their profile. Use when the user asks about a precise technical skill or research area keyword."""
     faculty_repo = get_faculty_repo()
-    cfg = get_config()
 
     terms = [t.strip() for t in expertise.replace(",", " ").split() if len(t.strip()) >= 2]
     if not terms:
@@ -83,8 +82,4 @@ async def find_faculty_by_expertise(
         "faculty": faculty_list,
     }
 
-    output = json.dumps(result, default=str)
-    cap = cfg.TOKEN_CAP_FACULTY_EXPERTISE
-    if len(output) > cap:
-        output = output[:cap] + '..."}'
-    return output
+    return json.dumps(result, default=str)

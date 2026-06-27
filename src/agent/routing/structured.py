@@ -225,6 +225,7 @@ async def _top_faculty_citations(_: str, faculty_repo: FacultyRepository, __: Re
         dept_info = d.get("department") or {}
         dept = dept_info.get("name", "") if isinstance(dept_info, dict) else ""
         email = d.get("email", "N/A")
-        cites = d.get("citation_count", "N/A")
-        lines.append(f"{i}. **{name}** ({cites:,} citations)  \n   {dept}  \n   📧 {email}")
+        cites = d.get("citation_count")
+        cites_str = f"{cites:,}" if isinstance(cites, (int, float)) else "N/A"
+        lines.append(f"{i}. **{name}** ({cites_str} citations)  \n   {dept}  \n   📧 {email}")
     return {"text": "\n".join(lines)}

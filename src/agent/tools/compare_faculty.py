@@ -18,11 +18,10 @@ class CompareFacultyArgs(BaseModel):
 async def compare_faculty(name_a: str, name_b: str) -> str:
     """Compare two IIT Delhi professors side-by-side: h-index, citations, paper count, expertise."""
     from agent.guardrails.guardrails import name_tokens, faculty_name_matches
-    from agent.tools._registry import get_faculty_repo, get_research_repo, get_config
+    from agent.tools._registry import get_faculty_repo, get_research_repo
 
     faculty_repo = get_faculty_repo()
     research_repo = get_research_repo()
-    cfg = get_config()
 
     async def _resolve(name: str) -> dict[str, Any] | None:
         tokens = name_tokens(name)
@@ -64,8 +63,4 @@ async def compare_faculty(name_a: str, name_b: str) -> str:
     if not b:
         return json.dumps({"error": f'Faculty "{name_b}" not found.', "found": a})
 
-    output = json.dumps({"comparison": [a, b]}, default=str)
-    cap = cfg.TOKEN_CAP_DEFAULT
-    if len(output) > cap:
-        output = output[:cap] + '..."}'
-    return output
+    return json.dumps({"comparison": [a, b]}, default=str)

@@ -9,7 +9,7 @@ from typing import Optional
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
-from agent.tools._registry import get_faculty_repo, get_config
+from agent.tools._registry import get_faculty_repo
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,6 @@ class ListDepartmentsArgs(BaseModel):
 async def list_departments(category: Optional[str] = None) -> str:
     """List all IIT Delhi departments, schools, centres, and research labs grouped by category."""
     faculty_repo = get_faculty_repo()
-    cfg = get_config()
 
     all_depts = await faculty_repo.list_all_departments(category=category)
 
@@ -46,8 +45,4 @@ async def list_departments(category: Optional[str] = None) -> str:
         "departments": grouped,
     }
 
-    output = json.dumps(result, default=str)
-    cap = cfg.TOKEN_CAP_LIST_DEPARTMENTS
-    if len(output) > cap:
-        output = output[:cap] + '..."}'
-    return output
+    return json.dumps(result, default=str)

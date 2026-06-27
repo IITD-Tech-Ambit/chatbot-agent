@@ -31,14 +31,12 @@ async def get_publication_stats(
 ) -> str:
     """Get publication count statistics for IIT Delhi. Supports filtering by department, topic, and year range.
     Use group_by='department' to see papers per department. Add topic= to scope to a research area."""
-    from agent.tools._registry import get_faculty_repo, get_research_repo, get_retriever, get_config
+    from agent.tools._registry import get_faculty_repo, get_research_repo, get_retriever
 
     faculty_repo = get_faculty_repo()
     research_repo = get_research_repo()
     retriever = get_retriever()
-    cfg = get_config()
 
-    # ── Year filter ──
     year_match: dict = {}
     if year_from:
         year_match["$gte"] = year_from
@@ -46,10 +44,12 @@ async def get_publication_stats(
         year_match["$lte"] = year_to
     base_match = {"publication_year": year_match} if year_match else {}
 
-    # ── Topic filter: use retriever to get paper IDs, never field_associated ──
     topic_ids: list[str] | None = None
     if topic:
-        hits = await retriever.retrieve(topic, top_k=400)
+        try:
+            hits = await retriever.retrieve(topic, top_k=400)
+        except Exception as exc:
+            return json.dumps({"topic": topic, "total_papers": 0, "groups": [], "error": f"Retrieval failed: {type(exc).__name__}"})
         topic_ids = [r["id"] for r in hits if r.get("id")]
         if not topic_ids:
             return json.dumps({
@@ -59,25 +59,17 @@ async def get_publication_stats(
                 "message": f"No publications found for topic '{topic}' in the IIT Delhi database.",
             })
 
-    # ── Single-department stats ──
     if department:
         result = await _department_stats(department, base_match, topic_ids, faculty_repo, research_repo)
-        output = json.dumps(result, default=str)
-        cap = cfg.TOKEN_CAP_PUBLICATION_STATS
-        return output[:cap] + '..."}' if len(output) > cap else output
+        return json.dumps(result, default=str)
 
-    # ── Group by department (default) ──
     if not group_by or group_by == "department":
         result = await _global_department_stats(
             base_match, year_from, year_to, topic, topic_ids, faculty_repo, research_repo
         )
-        output = json.dumps(result, default=str)
-        cap = cfg.TOKEN_CAP_PUBLICATION_STATS
-        return output[:cap] + '..."}' if len(output) > cap else output
+        return json.dumps(result, default=str)
 
-    # ── Group by year or document_type ──
     if topic_ids is not None:
-        # Filter aggregate to topic IDs
         result = await _aggregate_by_dimension_for_ids(
             topic_ids, base_match, group_by, year_from, year_to, research_repo
         )
@@ -99,9 +91,7 @@ async def get_publication_stats(
             ],
         }
 
-    output = json.dumps(result, default=str)
-    cap = cfg.TOKEN_CAP_PUBLICATION_STATS
-    return output[:cap] + '..."}' if len(output) > cap else output
+    return json.dumps(result, default=str)
 
 
 async def _aggregate_by_dimension_for_ids(

@@ -22,14 +22,15 @@ class ResearchTrendsArgs(BaseModel):
 @tool(args_schema=ResearchTrendsArgs)
 async def get_research_trends(topic: str, year_from: int | None = None, year_to: int | None = None) -> str:
     """Get research publication trends (paper counts per year) for a topic or field."""
-    from agent.tools._registry import get_retriever, get_research_repo, get_config
+    from agent.tools._registry import get_retriever, get_research_repo
 
     retriever = get_retriever()
     research_repo = get_research_repo()
-    cfg = get_config()
 
-    # Use OpenSearch semantic retrieval — searches title, abstract, subject_area, authors
-    hits = await retriever.retrieve(topic, top_k=400)
+    try:
+        hits = await retriever.retrieve(topic, top_k=400)
+    except Exception as exc:
+        return json.dumps({"topic": topic, "trend": [], "error": f"Retrieval failed: {type(exc).__name__}"})
 
     if not hits:
         return json.dumps({
@@ -41,7 +42,7 @@ async def get_research_trends(topic: str, year_from: int | None = None, year_to:
     paper_ids = [r["id"] for r in hits if r.get("id")]
     trend_data = await research_repo.trend_by_ids(paper_ids, year_from, year_to)
 
-    result = {
+    return json.dumps({
         "topic": topic,
         "year_from": year_from,
         "year_to": year_to,
@@ -51,9 +52,4 @@ async def get_research_trends(topic: str, year_from: int | None = None, year_to:
             for e in trend_data
             if e.get("_id") is not None
         ],
-    }
-    output = json.dumps(result, default=str)
-    cap = cfg.TOKEN_CAP_DEFAULT
-    if len(output) > cap:
-        output = output[:cap] + '..."}'
-    return output
+    }, default=str)

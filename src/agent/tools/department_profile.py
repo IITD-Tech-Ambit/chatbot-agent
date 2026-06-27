@@ -9,7 +9,7 @@ from typing import Optional
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
-from agent.tools._registry import get_faculty_repo, get_research_repo, get_config
+from agent.tools._registry import get_faculty_repo, get_research_repo
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,6 @@ async def get_department_profile(department: str) -> str:
     """Get a full overview of an IIT Delhi department including faculty count, top faculty by h-index, and publication statistics."""
     faculty_repo = get_faculty_repo()
     research_repo = get_research_repo()
-    cfg = get_config()
 
     dept_doc = await faculty_repo.find_department(department)
     if not dept_doc:
@@ -79,8 +78,4 @@ async def get_department_profile(department: str) -> str:
         "publication_stats": pub_stats,
     }
 
-    output = json.dumps(result, default=str)
-    cap = cfg.TOKEN_CAP_DEPARTMENT_PROFILE
-    if len(output) > cap:
-        output = output[:cap] + '..."}'
-    return output
+    return json.dumps(result, default=str)
