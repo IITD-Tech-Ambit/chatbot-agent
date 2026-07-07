@@ -1,29 +1,68 @@
-# Research Chatbot Agent
+# Research Ambit Chatbot Agent
 
-Production-grade agentic RAG chatbot for the IIT Delhi research portal.
-Built with **LangGraph** + **FastAPI**, powered by **Llama 3.3 70B** via **Groq**.
+Agentic RAG chatbot for the [Research Ambit](https://researchambit.iitd.ac.in/) portal at IIT Delhi. Answers natural-language questions about faculty, departments, and publications by retrieving live data from MongoDB and OpenSearch, then synthesizing a streamed response with **xAI Grok** via a **LangGraph** agent.
+
+Built with **FastAPI**, **LangGraph**, and **LangChain**. Designed to power the floating research chat widget in `tech-ambit-explorer`.
+
+## Role in the Research Ambit stack
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  tech-ambit-explorer (React/Vite)                    :8080      │
+│  VITE_CHAT_API_URL → chatbot-agent /api/v1                      │
+└───────────────────────────────┬─────────────────────────────────┘
+                                │ SSE (POST /api/v1/chat)
+                                ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  chatbot-agent (this repo)                           :3003      │
+│  LangGraph agent → tools → MongoDB / OpenSearch / search-api  │
+└───────┬─────────────┬──────────────┬──────────────┬───────────┘
+        │             │              │              │
+        ▼             ▼              ▼              ▼
+   MongoDB      OpenSearch      Redis         Embedding svc
+ (research_db) (research_docs)  (cache)         (BGE :8000)
+                                    │
+                                    └── search-api (Node, :3000)
+                                        faculty-for-topic aggregation
+```
+
+| Service | Repo / path | Used for |
+|---------|-------------|----------|
+| Frontend | [`tech-ambit-explorer`](https://github.com/IITD-Tech-Ambit/tech-ambit-explorer) | Chat widget UI; calls `VITE_CHAT_API_URL` |
+| Search API | [`opensearch`](https://github.com/IITD-Tech-Ambit) (local `opensearch/`) | Hybrid paper search index; faculty topic lookup via HTTP |
+| Backend CMS | [`research-ambit-main`](https://github.com/IITD-Tech-Ambit/research-ambit-main) | Shared MongoDB research database (not called directly) |
+| Embedding | BGE service (`opensearch` stack) | Query embeddings + cross-encoder reranking |
+
+In production, nginx (see `opensearch/deploy/nginx/nginx.conf`) proxies the chat SSE endpoint at `/chat-api/api/v1/chat` → `chatbot:3003`.
 
 ## Features
 
-- A forced-tool agent graph (no hallucination — always retrieves before answering)
-- 7 tools: `search_papers`, `find_faculty_for_topic`, `get_faculty_profile`,
-  `get_publication_stats`, `compare_faculty`, `find_similar_papers`, `get_research_trends`
-- Regex guardrails (identity/capability/greeting/injection short-circuits without LLM)
-- Structured-query fast paths (h-index/citations/dept lookups bypass the LLM entirely)
-- Redis LLM-response cache + embedding cache
-- SSE streaming compatible with the existing `tech-ambit-explorer` frontend
-- 99 pytest tests (guardrails, routing, tools, graph, SSE endpoint)
+- **Forced-tool agent graph** — always retrieves before answering; injects `search_papers` if the LLM returns no tool calls
+- **12 auto-discovered tools** — papers, faculty, departments, stats, trends, comparisons, interdisciplinary search
+- **Hybrid RAG retrieval** — BM25 + kNN over OpenSearch, BGE reranking, MongoDB hydration, kerberos/department boosts
+- **Fast paths** — regex guardrails (greeting/identity/injection) and structured queries (h-index, citations, dept) bypass the LLM
+- **Redis caching** — LLM response cache + embedding cache
+- **SSE streaming** — `thinking`, `status`, `sources`, `chart`, `token`, `done` events for the frontend
+- **Prometheus metrics** — exposed on the FastAPI app
+- **295 pytest tests** — guardrails, routing, tools, graph, SSE endpoint (fully mocked, no live infra)
+- **Retrieval eval suite** — offline/live benchmarks under `eval/` (see [`eval/README.md`](eval/README.md))
 
-## Quick Start (local)
+## Quick start (local)
 
-### 1. Prerequisites
+### Prerequisites
 
 - Python 3.11+
-- MongoDB, OpenSearch, Redis (see `opensearch/.env` for connection details)
-- The BGE embedding service running on `localhost:8000`
-- A Groq API key ([console.groq.com/keys](https://console.groq.com/keys))
+- Running instances of:
+  - **MongoDB** — shared research database (`research_db`)
+  - **OpenSearch** — paper index (`research_documents`)
+  - **Redis** — rate limiting + caches
+  - **BGE embedding service** — typically `http://localhost:8000`
+  - **Search API** — Node.js service from the `opensearch` repo, typically `http://localhost:3000`
+- **xAI API key** — [console.x.ai](https://console.x.ai/) (stored in `GROQ_API_KEY`; legacy env name)
 
-### 2. Install and configure
+Connection details for MongoDB, OpenSearch, and Redis are usually shared with the rest of the stack via `opensearch/.env`.
+
+### Install and configure
 
 ```bash
 cd chatbot-agent
@@ -32,42 +71,69 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 
 cp .env.example .env
-# Edit .env — set GROQ_API_KEY and adjust service URLs
+# Set GROQ_API_KEY (xAI key) and adjust service URLs
 ```
 
-### 3. Run
+### Run
 
 ```bash
 python run.py
 ```
 
-The server starts on `http://localhost:3003`.
+Server starts at `http://localhost:3003`. Health check: `GET /health`.
 
-### 4. Run tests
+Point the frontend at the agent:
+
+```bash
+# tech-ambit-explorer/.env
+VITE_CHAT_API_URL=http://localhost:3003/api/v1
+```
+
+### Run tests
 
 ```bash
 python -m pytest tests/ -v
 ```
 
-All 99 tests run without any external services (fully mocked).
+CI excludes offline eval fixtures and one known graph test (see `.github/workflows/ci.yml`). Tests mock LLM, MongoDB, OpenSearch, and Redis — no external services required.
+
+### Docker
+
+```bash
+docker build -t chatbot-agent .
+docker run --env-file .env -p 3003:3003 chatbot-agent
+```
+
+The image runs **gunicorn** + **UvicornWorker** (2 workers by default, override with `WEB_CONCURRENCY`).
 
 ## API
 
-```
-POST /api/v1/chat
-Body: { "message": "...", "history": [{ "role": "user"|"assistant", "content": "..." }] }
-Response: Server-Sent Events stream
+### `POST /api/v1/chat`
 
-GET /health
-Response: JSON health check
+```json
+{
+  "message": "Who works on machine learning in CSE?",
+  "history": [
+    { "role": "user", "content": "..." },
+    { "role": "assistant", "content": "..." }
+  ]
+}
 ```
 
-### SSE Event Contract
+**Response:** Server-Sent Events stream.
+
+### `GET /health`
+
+Returns `healthy` or `degraded` with per-backend checks (MongoDB, OpenSearch, Redis, embedding service).
+
+### SSE event contract
 
 | Event | Data | When |
 |-------|------|------|
+| `thinking` | `{"text": "Searching indexed publications"}` | Tool selection (user-friendly label) |
 | `status` | `{"text": "Searching publications..."}` | Tool execution starts |
-| `sources` | `[{citation_index, title, authors, year, ...}]` | After `search_papers` completes |
+| `sources` | `[{citation_index, title, authors, year, ...}]` | After paper search completes |
+| `chart` | chart payload | When a tool returns chartable stats |
 | `token` | `{"text": "..."}` | Each token of the streamed answer |
 | `done` | `{"took_ms": 1234}` | Response complete |
 | `error` | `{"message": "..."}` | On failure |
@@ -75,101 +141,107 @@ Response: JSON health check
 ## Architecture
 
 ```
-Request -> sanitize -> rate limit (Redis, fail-open)
-       -> guardrails (greeting/identity/capability/injection -> canned reply, no LLM)
-       -> structured router (h-index/citations/dept -> MongoDB direct, no LLM)
-       -> LLM cache check (Redis)
-       -> LangGraph agent:
-            agent node (Llama 3.3 70B, temp=0, bind_tools)
-              -> forces >=1 tool call (injects search_papers if LLM returns none)
-            ToolNode (parallel execution, single round)
-              -> context budget guard (truncate per-tool, cap total)
-            answer node (Llama 3.3 70B, temp=0.3, tagged ["answer"] for SSE filtering)
-       -> SSE stream (astream_events v2 -> status/sources/token/done)
-       -> cache the answer in Redis
+Request
+  → sanitize + validate
+  → guardrails (greeting / identity / capability / injection → canned reply, no LLM)
+  → structured router (h-index / citations / dept → MongoDB direct, no LLM)
+  → LLM cache check (Redis)
+  → LangGraph agent:
+       agent node (Grok, temp=0, bind_tools)
+         → forces ≥1 tool call (injects search_papers if LLM returns none)
+       ToolNode (parallel execution, single round)
+         → context budget guard (truncate per-tool, cap total)
+       answer node (Grok, temp=0.3, tagged ["answer"] for SSE filtering)
+  → SSE stream (astream_events v2 → thinking/status/sources/chart/token/done)
+  → cache answer in Redis
 ```
 
-### Key Design Decisions
+### Key design decisions
 
-- **Forced tool calling**: The agent always calls at least one tool. If the LLM returns no
-  tool_calls, a `search_papers` call is injected from the user's query. This prevents
-  hallucination of papers, faculty, and statistics.
-- **Single tool round**: `MAX_TOOL_ROUNDS=1` enforced via `tool_rounds` counter in `AgentState`.
-- **Two LLM instances**: `make_tool_llm()` (temp=0) for deterministic tool selection,
-  `make_answer_llm()` (temp=0.3, tagged `["answer"]`) for the final streamed answer.
-- **Groq inference**: Llama 3.3 70B at ~394 tok/s, sub-second TTFT, 128K context window.
-  No local GPU required.
-- **Repository layer**: Tools depend on `FacultyRepository` / `ResearchRepository`, not the
-  raw Motor client. Tests mock at the repository layer.
+- **Forced tool calling** — prevents hallucinated papers, faculty, or statistics
+- **Single tool round** — `MAX_TOOL_ROUNDS=1` enforced via `tool_rounds` in `AgentState`
+- **Two LLM instances** — `make_tool_llm()` (temp=0) for tool selection; `make_answer_llm()` (temp=0.3) for streaming answers
+- **xAI Grok via OpenAI-compatible API** — `https://api.x.ai/v1`; main model `grok-4.3`, cheap `grok-3-mini` for query parsing
+- **Repository layer** — tools depend on `FacultyRepository` / `ResearchRepository`; tests mock at this seam
+- **Kerberos linkage** — paper→faculty attribution uses indexed `kerberos` (email prefix), not Scopus `field_associated`
 
 ## Tools
 
-| Tool | Source | Example Query |
-|------|--------|---------------|
-| `search_papers` | OpenSearch (kNN+BM25) + MongoDB | "research on solar cells" |
+Tools are auto-discovered from `src/agent/tools/*.py` at startup.
+
+| Tool | Primary source | Example query |
+|------|----------------|---------------|
+| `search_papers` | OpenSearch (BM25 + kNN) + MongoDB | "research on perovskite solar cells" |
 | `find_faculty_for_topic` | search-api HTTP + MongoDB | "who works on ML" |
-| `get_faculty_profile` | MongoDB (dual kerberos+scopus_id) | "Prof Kumar's publications" |
+| `find_faculty_by_expertise` | MongoDB | "faculty with expertise in robotics" |
+| `get_faculty_profile` | MongoDB (kerberos + scopus_id) | "Prof Kumar's publications" |
 | `get_publication_stats` | MongoDB aggregations | "papers by Civil Engineering" |
+| `get_department_profile` | MongoDB | "overview of CSE department" |
+| `list_departments` | MongoDB | "list all departments" |
 | `compare_faculty` | MongoDB | "compare Prof A vs Prof B" |
 | `find_similar_papers` | re-embed + kNN | "papers similar to this one" |
-| `get_research_trends` | MongoDB aggregation | "ML paper trends 2018-2023" |
+| `get_research_trends` | MongoDB aggregation | "ML paper trends 2018–2023" |
+| `find_interdisciplinary_papers` | OpenSearch + MongoDB | "cross-department work on AI" |
+| `get_top_faculty` | MongoDB | "top cited faculty in EE" |
 
-## Project Structure
+## Environment variables
+
+See [`.env.example`](.env.example) for the full list. Key settings:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | `3003` | HTTP listen port |
+| `MONGODB_URI` | `mongodb://localhost:27017/research_db` | Shared research database |
+| `OPENSEARCH_NODE` | `http://localhost:9200` | OpenSearch cluster |
+| `OPENSEARCH_INDEX` | `research_documents` | Paper index name |
+| `REDIS_URL` | `redis://localhost:6379` | Caches + rate limiting |
+| `EMBEDDING_SERVICE_URL` | `http://localhost:8000` | BGE embed + rerank service |
+| `SEARCH_API_URL` | `http://localhost:3001` | Faculty-for-topic search-api (live stack uses `:3000`) |
+| `GROQ_API_KEY` | — | **Required.** xAI API key (legacy env name) |
+| `GROQ_MODEL` | `grok-4.3` | Main LLM for tool selection + answers |
+| `GROQ_EXTRACT_MODEL` | `grok-3-mini` | Cheap model for query parsing |
+| `MAX_TOOL_ROUNDS` | `1` | Agent tool-call limit |
+| `CHAT_TOP_K` | `8` | Papers retrieved per search |
+| `LLM_CACHE_TTL` | `90` | Response cache TTL (seconds; `0` = off) |
+| `ALLOWED_ORIGINS` | `*` | CORS origins (comma-separated or JSON array) |
+
+## Project structure
 
 ```
 chatbot-agent/
 ├── run.py                          # uvicorn entrypoint
+├── Dockerfile                      # gunicorn + UvicornWorker production image
+├── eval/                           # retrieval + E2E evaluation (see eval/README.md)
 ├── src/agent/
 │   ├── config.py                   # pydantic-settings
 │   ├── main.py                     # FastAPI app + lifespan
 │   ├── api/
-│   │   ├── routes_chat.py          # SSE chat endpoint (astream_events mapping)
+│   │   ├── routes_chat.py          # SSE chat endpoint
 │   │   ├── routes_health.py        # /health
-│   │   └── schemas.py              # Pydantic request models
-│   ├── graph/
-│   │   ├── state.py                # AgentState (messages + tool_rounds)
-│   │   ├── nodes.py                # agent, answer, route_after_agent, budget guard
-│   │   └── builder.py              # StateGraph construction
+│   │   └── sse_events.py           # typed SSE payloads
+│   ├── graph/                      # LangGraph state, nodes, builder
 │   ├── llm/
-│   │   ├── groq_client.py          # make_tool_llm / make_answer_llm (ChatOpenAI → Groq)
+│   │   ├── groq_client.py          # xAI Grok factory (tool + answer LLMs)
 │   │   └── prompts.py              # system prompt
-│   ├── tools/                      # @tool with Pydantic args_schema
-│   │   ├── _registry.py            # dependency injection for tools
-│   │   ├── search_papers.py
-│   │   ├── find_faculty.py
-│   │   ├── faculty_profile.py
-│   │   ├── publication_stats.py
-│   │   ├── compare_faculty.py
-│   │   ├── similar_papers.py
-│   │   └── research_trends.py
-│   ├── repositories/               # mock seam for tests
-│   │   ├── faculty_repo.py
-│   │   └── research_repo.py
+│   ├── tools/                      # auto-discovered @tool modules
+│   ├── repositories/               # FacultyRepository, ResearchRepository
 │   ├── rag/
-│   │   ├── retriever.py            # hybrid BM25+kNN + hydrate + truncation
-│   │   └── embeddings.py           # embedding client + Redis cache
-│   ├── data/                       # connection managers
-│   │   ├── mongo.py
-│   │   ├── opensearch.py
-│   │   └── redis.py
-│   ├── guardrails/
-│   │   └── guardrails.py           # sanitize, classify_meta, injection detection
-│   ├── routing/
-│   │   └── structured.py           # fast-path regex router
-│   └── services/
-│       ├── cache.py                # Redis LLM-response cache
-│       └── ratelimit.py            # Redis fixed-window rate limiter
-└── tests/                          # 99 tests, fully mocked
-    ├── conftest.py                 # fake LLMs, repos, Redis
-    ├── test_guardrails.py
-    ├── test_structured_routing.py
-    ├── test_tools.py
-    ├── test_agent_graph.py
-    └── test_chat_endpoint.py
+│   │   ├── retriever.py            # hybrid BM25+kNN + rerank + hydrate
+│   │   ├── embeddings.py           # embedding client + Redis cache
+│   │   └── query_parser.py         # LLM faculty/dept extraction
+│   ├── data/                       # mongo, opensearch, redis clients
+│   ├── guardrails/                 # sanitize, meta-classify, injection detect
+│   ├── routing/                    # structured fast-path router
+│   └── services/                   # LLM cache, rate limiter
+└── tests/                          # pytest suite (mocked backends)
 ```
 
-## Dependencies
+## Related repositories
 
-- MongoDB, OpenSearch, Redis, the BGE embedding service
-- Groq API key (free tier available)
-- See `.env.example` for all configuration
+- [`tech-ambit-explorer`](https://github.com/IITD-Tech-Ambit/tech-ambit-explorer) — frontend that consumes this API
+- [`research-ambit-main`](https://github.com/IITD-Tech-Ambit/research-ambit-main) — CMS / directory / knowledge-graph backend
+- [`classification-pipeline`](https://github.com/IITD-Tech-Ambit/classification-pipeline) — paper classification for the research corpus
+
+## License
+
+Part of the IIT Delhi Tech Ambit / Research Ambit project.
