@@ -1,6 +1,6 @@
 # Research Ambit Chatbot Agent
 
-Agentic RAG chatbot for the [Research Ambit](https://github.com/IITD-Tech-Ambit/tech-ambit-explorer) portal at IIT Delhi. Answers natural-language questions about faculty, departments, and publications by retrieving live data from MongoDB and OpenSearch, then synthesizing a streamed response with **xAI Grok** via a **LangGraph** agent.
+Agentic RAG chatbot for the [Research Ambit](https://researchambit.iitd.ac.in/) portal at IIT Delhi. Answers natural-language questions about faculty, departments, and publications by retrieving live data from MongoDB and OpenSearch, then synthesizing a streamed response with **xAI Grok** via a **LangGraph** agent.
 
 Built with **FastAPI**, **LangGraph**, and **LangChain**. Designed to power the floating research chat widget in `tech-ambit-explorer`.
 
