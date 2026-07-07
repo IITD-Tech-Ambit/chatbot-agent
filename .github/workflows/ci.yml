@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main, prod]
+  push:
+    branches: [main, prod]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - run: pip install -e ".[dev]"
+
+      # tests/conftest.py mocks the LLM, Mongo, and Redis, so the suite runs
+      # without live infra. The E2E class in test_retrieval_quality.py is
+      # gated behind RUN_E2E (unset here) and self-skips — it needs a running
+      # chatbot + OpenSearch reachable only from the IITD network.
+      - run: pytest tests/ -v
