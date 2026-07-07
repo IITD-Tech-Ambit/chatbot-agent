@@ -16,6 +16,10 @@ jobs:
         with:
           python-version: '3.11'
 
+      # requirements.txt is what's actually deployed with (has prometheus-client,
+      # which pyproject.toml's dependency list is currently missing); install
+      # both that and the dev/test extras from pyproject.toml.
+      - run: pip install -r requirements.txt
       - run: pip install -e ".[dev]"
 
       # tests/conftest.py mocks the LLM, Mongo, and Redis, so the suite runs
