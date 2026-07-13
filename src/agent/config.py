@@ -65,10 +65,13 @@ class Settings(BaseSettings):
     # Search API (HTTP fallback when MESH_TRANSPORT=http)
     SEARCH_API_URL: str = "http://localhost:3001"
 
-    # Per-user daily message quota (IST calendar day). Students only — see
-    # agent.services.quota.is_quota_exempt. Comma-separated kerberos IDs here
-    # bypass the limit regardless of category.
+    # Per-user daily message quota (IST calendar day). Only categories listed
+    # here (comma-separated, case-insensitive substring match against the
+    # IITD OAuth `category` claim) are subject to the limit — see
+    # agent.services.quota.is_quota_exempt. Comma-separated kerberos IDs in
+    # CHAT_QUOTA_WHITELIST_KERBEROS bypass the limit regardless of category.
     CHAT_QUOTA_DAILY: int = 5
+    CHAT_QUOTA_LIMITED_CATEGORIES: str = "student"
     CHAT_QUOTA_WHITELIST_KERBEROS: str = ""
 
     GROQ_API_KEY: str = ""

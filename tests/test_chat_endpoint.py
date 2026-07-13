@@ -243,6 +243,41 @@ class TestChatAuthAndQuota:
             )
         assert resp.status_code == 429
 
+    @pytest.mark.asyncio
+    async def test_limited_categories_is_configurable(self, monkeypatch):
+        """CHAT_QUOTA_LIMITED_CATEGORIES controls which categories get the
+        limit, not a hardcoded student/faculty split — reconfiguring it to
+        "faculty" should limit faculty and exempt students."""
+        from agent.config import settings
+
+        monkeypatch.setattr(settings, "CHAT_QUOTA_LIMITED_CATEGORIES", "faculty")
+
+        app = _make_app()
+        student_headers = {**AUTH_HEADERS, "x-user-kerberos": "stu1", "x-user-category": "Student"}
+        faculty_headers = {**AUTH_HEADERS, "x-user-kerberos": "prof1", "x-user-category": "Faculty"}
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            student_quota = (await client.get("/api/v1/quota", headers=student_headers)).json()
+            faculty_quota = (await client.get("/api/v1/quota", headers=faculty_headers)).json()
+        assert student_quota == {"unlimited": True}
+        assert faculty_quota == {"limit": 5, "used": 0, "remaining": 5, "unlimited": False}
+
+    @pytest.mark.asyncio
+    async def test_limited_categories_multiple_entries(self, monkeypatch):
+        """Comma-separated list — each entry independently subjects that
+        category to the limit."""
+        from agent.config import settings
+
+        monkeypatch.setattr(settings, "CHAT_QUOTA_LIMITED_CATEGORIES", "student, staff")
+
+        app = _make_app()
+        staff_headers = {**AUTH_HEADERS, "x-user-kerberos": "staff1", "x-user-category": "Staff"}
+        faculty_headers = {**AUTH_HEADERS, "x-user-kerberos": "prof2", "x-user-category": "Faculty"}
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            staff_quota = (await client.get("/api/v1/quota", headers=staff_headers)).json()
+            faculty_quota = (await client.get("/api/v1/quota", headers=faculty_headers)).json()
+        assert staff_quota == {"limit": 5, "used": 0, "remaining": 5, "unlimited": False}
+        assert faculty_quota == {"unlimited": True}
+
 
 class TestHealthEndpoint:
     @pytest.mark.asyncio

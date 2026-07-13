@@ -23,10 +23,13 @@ IST = ZoneInfo("Asia/Kolkata")
 
 
 def is_quota_exempt(kerberos: str, category: str) -> bool:
-    """The daily limit only applies to students. Faculty/staff get unlimited
-    chats, and specific kerberos IDs can be whitelisted regardless of
-    category. An empty/unrecognized category (e.g. missing header) is NOT
-    exempt — fail toward applying the limit, not toward unlimited chats."""
+    """Only categories listed in CHAT_QUOTA_LIMITED_CATEGORIES (env,
+    comma-separated, case-insensitive substring match — e.g. "student"
+    matches "UG Student"/"PG Student") are subject to the daily quota;
+    every other category (faculty, staff, anything unlisted) is unlimited.
+    Whitelisted kerberos IDs are always unlimited regardless of category.
+    An empty/unrecognized category (e.g. missing header) is NOT exempt —
+    fail toward applying the limit, not toward unlimited chats."""
     whitelist = {
         k.strip().lower()
         for k in settings.CHAT_QUOTA_WHITELIST_KERBEROS.split(",")
@@ -34,8 +37,18 @@ def is_quota_exempt(kerberos: str, category: str) -> bool:
     }
     if kerberos.strip().lower() in whitelist:
         return True
+
     category = category.strip().lower()
-    return bool(category) and "student" not in category
+    if not category:
+        return False
+
+    limited_categories = {
+        c.strip().lower()
+        for c in settings.CHAT_QUOTA_LIMITED_CATEGORIES.split(",")
+        if c.strip()
+    }
+    is_limited = any(c in category for c in limited_categories)
+    return not is_limited
 
 
 @dataclass(frozen=True)
