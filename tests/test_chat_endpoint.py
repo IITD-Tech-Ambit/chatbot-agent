@@ -179,7 +179,7 @@ class TestChatAuthAndQuota:
             )
             assert resp.status_code == 200
             quota = (await client.get("/api/v1/quota", headers=AUTH_HEADERS)).json()
-        assert quota == {"limit": 5, "used": 0, "remaining": 5}
+        assert quota == {"limit": 5, "used": 0, "remaining": 5, "unlimited": False}
 
     @pytest.mark.asyncio
     async def test_quota_endpoint_counts_usage(self):
@@ -190,7 +190,7 @@ class TestChatAuthAndQuota:
                 json={"message": "a research question about ML"},
             )
             quota = (await client.get("/api/v1/quota", headers=AUTH_HEADERS)).json()
-        assert quota == {"limit": 5, "used": 1, "remaining": 4}
+        assert quota == {"limit": 5, "used": 1, "remaining": 4, "unlimited": False}
 
     @pytest.mark.asyncio
     async def test_quota_endpoint_requires_identity(self):
@@ -198,6 +198,50 @@ class TestChatAuthAndQuota:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.get("/api/v1/quota")
         assert resp.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_faculty_category_is_unlimited(self):
+        app = _make_app()
+        headers = {**AUTH_HEADERS, "x-user-kerberos": "prof123", "x-user-category": "Faculty"}
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            for _ in range(6):
+                resp = await client.post(
+                    "/api/v1/chat", headers=headers, json={"message": "a research question about ML"},
+                )
+                assert resp.status_code == 200
+            quota = (await client.get("/api/v1/quota", headers=headers)).json()
+        assert quota == {"unlimited": True}
+
+    @pytest.mark.asyncio
+    async def test_whitelisted_student_kerberos_is_unlimited(self, monkeypatch):
+        from agent.config import settings
+
+        monkeypatch.setattr(settings, "CHAT_QUOTA_WHITELIST_KERBEROS", "ch7221511")
+        app = _make_app()
+        headers = {**AUTH_HEADERS, "x-user-kerberos": "ch7221511", "x-user-category": "Student"}
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            for _ in range(6):
+                resp = await client.post(
+                    "/api/v1/chat", headers=headers, json={"message": "a research question about ML"},
+                )
+                assert resp.status_code == 200
+            quota = (await client.get("/api/v1/quota", headers=headers)).json()
+        assert quota == {"unlimited": True}
+
+    @pytest.mark.asyncio
+    async def test_missing_category_still_applies_student_limit(self):
+        """No x-user-category header (e.g. older session) must not be treated as unlimited."""
+        app = _make_app()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            for _ in range(5):
+                resp = await client.post(
+                    "/api/v1/chat", headers=AUTH_HEADERS, json={"message": "a research question about ML"},
+                )
+                assert resp.status_code == 200
+            resp = await client.post(
+                "/api/v1/chat", headers=AUTH_HEADERS, json={"message": "a research question about ML"},
+            )
+        assert resp.status_code == 429
 
 
 class TestHealthEndpoint:

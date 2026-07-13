@@ -15,9 +15,27 @@ from zoneinfo import ZoneInfo
 
 import redis.asyncio as aioredis
 
+from agent.config import settings
+
 logger = logging.getLogger(__name__)
 
 IST = ZoneInfo("Asia/Kolkata")
+
+
+def is_quota_exempt(kerberos: str, category: str) -> bool:
+    """The daily limit only applies to students. Faculty/staff get unlimited
+    chats, and specific kerberos IDs can be whitelisted regardless of
+    category. An empty/unrecognized category (e.g. missing header) is NOT
+    exempt — fail toward applying the limit, not toward unlimited chats."""
+    whitelist = {
+        k.strip().lower()
+        for k in settings.CHAT_QUOTA_WHITELIST_KERBEROS.split(",")
+        if k.strip()
+    }
+    if kerberos.strip().lower() in whitelist:
+        return True
+    category = category.strip().lower()
+    return bool(category) and "student" not in category
 
 
 @dataclass(frozen=True)

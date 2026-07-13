@@ -239,7 +239,7 @@ chatbot-agent/
 ## Related repositories
 
 - [`tech-ambit-explorer`](https://github.com/IITD-Tech-Ambit/tech-ambit-explorer) — frontend that consumes this API
-- [`research-ambit-main`](https://github.com/IITD-Tech-Ambit/research-ambit-main) — CMS / directory / knowledge-graph backend
+- [`research-ambit-main`](https://github.com/IITD-Tech-Ambit/research-ambit-main) — CMS / directory / Atlas backend
 - [`classification-pipeline`](https://github.com/IITD-Tech-Ambit/classification-pipeline) — paper classification for the research corpus
 
 ## License

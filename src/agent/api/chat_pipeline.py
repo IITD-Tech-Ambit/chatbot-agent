@@ -30,6 +30,7 @@ from agent.guardrails.guardrails import (
     canned_reply,
     detect_injection,
 )
+from agent.services.quota import is_quota_exempt
 from agent.llm.prompts import get_system_prompt
 from agent.graph.state import AgentState
 from agent.tools.meta import thinking_label_for
@@ -53,6 +54,13 @@ def require_user_id(request: Request) -> str:
             detail="Login with your IITD account to use the chat assistant.",
         )
     return user_id
+
+
+def is_requester_quota_exempt(request: Request) -> bool:
+    """Trusted x-user-kerberos / x-user-category, also injected by the gateway."""
+    kerberos = request.headers.get("x-user-kerberos") or ""
+    category = request.headers.get("x-user-category") or ""
+    return is_quota_exempt(kerberos, category)
 
 
 def _trim_history(history: list[dict], budget: int = settings.HISTORY_TOKEN_BUDGET) -> list[dict]:
@@ -249,10 +257,14 @@ async def handle_chat(request: Request, body: ChatRequest) -> StreamingResponse 
         logger.warning("Injection attempt hard-blocked for message: %s", message[:80])
         return _canned_stream(canned_reply("refusal"), start_time)
 
-    # Per-user daily quota (IST) — counted after guardrail short-circuits
-    # so greetings/injection blocks don't burn messages
-    quota_state = await app.state.quota_store.consume(user_id)
-    if not quota_state.allowed:
+    # Per-user daily quota (IST) — counted after guardrail short-circuits so
+    # greetings/injection blocks don't burn messages. Faculty/staff and
+    # whitelisted kerberos IDs are exempt and never touch the counter.
+    quota_state = (
+        None if is_requester_quota_exempt(request)
+        else await app.state.quota_store.consume(user_id)
+    )
+    if quota_state is not None and not quota_state.allowed:
         return JSONResponse(
             status_code=429,
             content={
