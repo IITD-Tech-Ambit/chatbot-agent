@@ -72,14 +72,12 @@ def hallucination_flags(answer: str, sources: list[dict[str, Any]]) -> dict[str,
 
     flags: list[str] = []
 
-    # Years not in sources
     answer_years = set(re.findall(r"\b(?:19|20)\d{2}\b", answer))
     source_years = set(re.findall(r"\b(?:19|20)\d{2}\b", source_blob))
     unsupported_years = answer_years - source_years
     if unsupported_years:
         flags.append(f"unsupported_years:{','.join(sorted(unsupported_years))}")
 
-    # Large citation counts
     for m in re.finditer(r"\b(\d{2,5})\s+citations?\b", answer, re.I):
         num = m.group(1)
         if num not in source_blob:

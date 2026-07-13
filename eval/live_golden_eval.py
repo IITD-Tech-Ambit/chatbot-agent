@@ -203,7 +203,6 @@ class LiveGoldenBuilder:
 
             relevant = {pid: 3 for pid in paper_ids}  # grade 3 = exact faculty match
 
-            # Full name query
             if first:
                 queries.append({
                     "id": f"live_faculty_full_{kerberos}",
@@ -368,7 +367,6 @@ class LiveGoldenBuilder:
             if not kerberoses:
                 continue
 
-            # Pick one random paper from this dept
             paper_ids = await self._papers_for_dept_kerberos(kerberoses, max_papers=20)
             if not paper_ids:
                 continue
@@ -566,7 +564,6 @@ async def main_async(args: argparse.Namespace) -> int:
     all_queries = faculty_qs + dept_qs + topic_title_qs + topic_abs_qs + dept_topic_qs
     print(f"\nTotal queries: {len(all_queries)}")
 
-    # Optionally save the generated golden set
     if args.save_golden:
         golden_path = Path(args.save_golden)
         golden_path.parent.mkdir(parents=True, exist_ok=True)
@@ -581,7 +578,6 @@ async def main_async(args: argparse.Namespace) -> int:
     report = await run_live_golden_eval(retriever, all_queries, top_k=50)
     _print_report(report)
 
-    # Save full report
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
