@@ -56,9 +56,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
-# ── OpenSearch query builders ──────────────────────────────────────────────────
-
 def _build_kerberos_filtered_body(
     query: str,
     embedding: list[float],
@@ -99,7 +96,6 @@ def _build_kerberos_filtered_body(
             }
         },
     }
-
 
 def _build_content_body(
     query: str,
@@ -156,9 +152,6 @@ def _build_content_body(
         },
     }
 
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
 def _kerberoses_from_faculty(faculty: list[dict]) -> list[str]:
     result: list[str] = []
     for f in faculty:
@@ -168,9 +161,6 @@ def _kerberoses_from_faculty(faculty: list[dict]) -> list[str]:
             if k:
                 result.append(k)
     return result
-
-
-# ── Retriever ──────────────────────────────────────────────────────────────────
 
 class Retriever:
     def __init__(
@@ -190,8 +180,6 @@ class Retriever:
         self._top_k = top_k
         self._faculty = faculty_repo
         self._parser = query_parser
-
-    # ── Kerberos resolution ────────────────────────────────────────────────────
 
     async def _resolve_author_kerberoses(self, faculty_name: str | None) -> list[str]:
         if not self._faculty or not faculty_name:
@@ -226,8 +214,6 @@ class Retriever:
             except Exception as exc:
                 logger.debug("Faculty by dept_id failed for %r: %s", dept_name, exc)
         return kerberoses
-
-    # ── Main retrieve ──────────────────────────────────────────────────────────
 
     async def retrieve(
         self,
@@ -274,7 +260,6 @@ class Retriever:
                 query,
             )
 
-        # ── First-stage retrieval ──────────────────────────────────────────────
         hits: list[dict] = []
 
         if all_kerberoses:
@@ -301,7 +286,6 @@ class Retriever:
         ]
         docs = await self._repo.find_by_ids(mongo_ids)
 
-        # ── Cross-encoder reranking ────────────────────────────────────────────
         if len(docs) > 1:
             doc_texts = [
                 f"{d.get('title', '')} {(d.get('abstract') or '')[:400]}"
@@ -311,7 +295,6 @@ class Retriever:
             if ranked_pairs:
                 docs = [docs[idx] for idx, _ in ranked_pairs]
 
-        # ── Shape results ──────────────────────────────────────────────────────
         results: list[dict[str, Any]] = []
         for i, doc in enumerate(docs):
             abstract = doc.get("abstract") or ""

@@ -15,9 +15,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 logger = logging.getLogger(__name__)
 
-
 _KERBEROS_DEPT_CACHE_TTL = 3600
-
 
 class FacultyRepository:
     def __init__(self, db: AsyncIOMotorDatabase) -> None:
@@ -25,8 +23,6 @@ class FacultyRepository:
         self._departments = db["departments"]
         self._kerberos_dept_cache: dict[str, str] | None = None
         self._kerberos_dept_cache_ts: float = 0.0
-
-    # ── Faculty text search ──
 
     async def text_search(self, query: str, limit: int = 5) -> list[dict[str, Any]]:
         cursor = (
@@ -99,8 +95,6 @@ class FacultyRepository:
         # Stage 3: full OR fallback
         return await self.regex_search(name_tokens, limit=limit)
 
-    # ── Faculty by expert_id list ──
-
     async def find_by_expert_ids(self, expert_ids: list[str]) -> list[dict[str, Any]]:
         cursor = self._faculty.find(
             {"expert_id": {"$in": expert_ids}},
@@ -113,8 +107,6 @@ class FacultyRepository:
         )
         results = await cursor.to_list(length=len(expert_ids))
         return await self._populate_department(results)
-
-    # ── Department lookup ──
 
     async def find_department(self, name: str) -> dict[str, Any] | None:
         exact = re.compile(r"^" + re.escape(name) + r"$", re.IGNORECASE)
@@ -157,8 +149,6 @@ class FacultyRepository:
         results = await cursor.to_list(length=limit)
         return await self._populate_department(results)
 
-    # ── Top faculty globally or per-department ──
-
     async def find_top_faculty_global(
         self,
         sort_by: str = "h_index",
@@ -195,8 +185,6 @@ class FacultyRepository:
             if dept:
                 match["department"] = dept["_id"]
         return await self._faculty.count_documents(match)
-
-    # ── Kerberos → department name map (for paper attribution) ──
 
     async def get_kerberos_to_faculty_map(self, kerberoses: list[str]) -> dict[str, dict[str, str]]:
         """Batch-fetch {kerberos: {name, department}} for a list of kerberos IDs."""
@@ -256,8 +244,6 @@ class FacultyRepository:
         self._kerberos_dept_cache_ts = time.monotonic()
         return result
 
-    # ── List all departments ──
-
     async def list_all_departments(self, category: str | None = None) -> list[dict[str, Any]]:
         match: dict[str, Any] = {}
         if category:
@@ -266,8 +252,6 @@ class FacultyRepository:
             match, {"name": 1, "code": 1, "category": 1}
         ).sort("name", 1)
         return await cursor.to_list(length=500)
-
-    # ── Faculty by expertise ──
 
     async def find_faculty_by_expertise(
         self, expertise_terms: list[str], limit: int = 15
@@ -294,8 +278,6 @@ class FacultyRepository:
         )
         results = await cursor.to_list(length=limit)
         return await self._populate_department(results)
-
-    # ── Private helpers ──
 
     async def _populate_department(self, docs: list[dict]) -> list[dict]:
         dept_ids = {

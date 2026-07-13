@@ -4,7 +4,6 @@ Graph shape:
   agent -> route_after_agent -> {tools | answer}
   tools -> bump_rounds -> agent  (tool_rounds gate in agent_node prevents loops)
 
-The agent node forces >=1 tool call (no-tool-call = inject search_papers).
 When tool_rounds >= MAX_TOOL_ROUNDS, agent_node emits an empty AI message
 (no tool_calls) which routes to answer.
 """
@@ -14,12 +13,12 @@ from __future__ import annotations
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
+from langchain_core.tools import BaseTool
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
 
 from agent.graph.state import AgentState
-from agent.graph.nodes import agent_node, answer_node, route_after_agent, init_node_deps
-from agent.tools._registry import all_tools
+from agent.graph.nodes import make_agent_node, make_answer_node, route_after_agent
 
 
 def _bump_rounds(state: AgentState) -> dict[str, Any]:
@@ -30,12 +29,12 @@ def _bump_rounds(state: AgentState) -> dict[str, Any]:
 def build_graph(
     tool_llm: BaseChatModel,
     answer_llm: BaseChatModel,
+    tools: list[BaseTool],
 ) -> Any:
-    """Construct and compile the agent graph."""
-    tools = all_tools()
+    """Construct and compile the agent graph with injected LLMs and tools."""
     tool_node = ToolNode(tools)
-
-    init_node_deps(tool_llm, answer_llm, tools)
+    agent_node = make_agent_node(tool_llm, tools)
+    answer_node = make_answer_node(answer_llm, tools)
 
     graph = StateGraph(AgentState)
 

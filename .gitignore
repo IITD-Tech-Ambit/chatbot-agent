@@ -1,15 +1,47 @@
+# Byte-compiled / optimized / cache
 __pycache__/
-*.pyc
+*.py[cod]
 *.pyo
-.env
-eval/results/
-eval/fixtures/
+
+# Packaging / build
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual environments
 .venv/
 venv/
-*.egg-info/
-dist/
-build/
+env/
+
+# Testing / linting / type-checking caches
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.tox/
+.coverage
+htmlcov/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Environment / secrets (keep the example tracked)
+.env
+.env.*
+!.env.example
+
+# OS / editor cruft
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Logs
+*.log
+
+# Node
 node_modules/
+
+# Project-specific
+eval/results/
+eval/fixtures/

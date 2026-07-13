@@ -12,6 +12,9 @@ from httpx import ASGITransport, AsyncClient
 
 from tests.conftest import FakeRedis, FakeToolCallingLLM, FakeNoToolLLM
 
+# Trusted identity header normally injected by the api-gateway
+AUTH_HEADERS = {"x-user-id": "testuser"}
+
 
 def _make_app():
     """Create a FastAPI app with mocked state for testing."""
@@ -21,6 +24,7 @@ def _make_app():
     from agent.api.routes_health import router as health_router
     from agent.api.routes_chat import router as chat_router
     from agent.services.cache import LLMCache
+    from agent.services.quota import RedisQuotaStore
 
     app = FastAPI()
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -29,6 +33,7 @@ def _make_app():
 
     redis = FakeRedis()
     app.state.llm_cache = LLMCache(redis, ttl=0)
+    app.state.quota_store = RedisQuotaStore(redis, daily_limit=5)
 
     fake_llm = FakeToolCallingLLM(answer="Test answer from LLM.")
     app.state.tool_llm = fake_llm
@@ -87,7 +92,7 @@ class TestChatEndpoint:
     async def test_sse_event_order(self):
         app = _make_app()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.post("/api/v1/chat", json={"message": "Tell me about ML research"})
+            resp = await client.post("/api/v1/chat", headers=AUTH_HEADERS, json={"message": "Tell me about ML research"})
 
         assert resp.status_code == 200
         lines = resp.text.strip().split("\n")
@@ -109,7 +114,7 @@ class TestChatEndpoint:
     async def test_meta_short_circuit_no_llm(self):
         app = _make_app()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.post("/api/v1/chat", json={"message": "who are you"})
+            resp = await client.post("/api/v1/chat", headers=AUTH_HEADERS, json={"message": "who are you"})
 
         assert resp.status_code == 200
         lines = resp.text.strip().split("\n")
@@ -126,7 +131,7 @@ class TestChatEndpoint:
     async def test_empty_message_400(self):
         app = _make_app()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.post("/api/v1/chat", json={"message": ""})
+            resp = await client.post("/api/v1/chat", headers=AUTH_HEADERS, json={"message": ""})
         assert resp.status_code == 422
 
     @pytest.mark.asyncio
@@ -134,8 +139,65 @@ class TestChatEndpoint:
         """Sanity: a well-formed request always gets a 200 stream (rate limiter removed)."""
         app = _make_app()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.post("/api/v1/chat", json={"message": "test query about IIT Delhi"})
+            resp = await client.post("/api/v1/chat", headers=AUTH_HEADERS, json={"message": "test query about IIT Delhi"})
         assert resp.status_code == 200
+
+
+class TestChatAuthAndQuota:
+    @pytest.mark.asyncio
+    async def test_missing_identity_401(self):
+        app = _make_app()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post("/api/v1/chat", json={"message": "test question"})
+        assert resp.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_quota_exhaustion_429(self):
+        app = _make_app()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            for _ in range(5):
+                resp = await client.post(
+                    "/api/v1/chat", headers=AUTH_HEADERS,
+                    json={"message": "a research question about ML"},
+                )
+                assert resp.status_code == 200
+            resp = await client.post(
+                "/api/v1/chat", headers=AUTH_HEADERS,
+                json={"message": "a research question about ML"},
+            )
+        assert resp.status_code == 429
+        data = resp.json()
+        assert data["remaining"] == 0
+        assert data["limit"] == 5
+
+    @pytest.mark.asyncio
+    async def test_greetings_do_not_consume_quota(self):
+        app = _make_app()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/api/v1/chat", headers=AUTH_HEADERS, json={"message": "who are you"}
+            )
+            assert resp.status_code == 200
+            quota = (await client.get("/api/v1/quota", headers=AUTH_HEADERS)).json()
+        assert quota == {"limit": 5, "used": 0, "remaining": 5}
+
+    @pytest.mark.asyncio
+    async def test_quota_endpoint_counts_usage(self):
+        app = _make_app()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post(
+                "/api/v1/chat", headers=AUTH_HEADERS,
+                json={"message": "a research question about ML"},
+            )
+            quota = (await client.get("/api/v1/quota", headers=AUTH_HEADERS)).json()
+        assert quota == {"limit": 5, "used": 1, "remaining": 4}
+
+    @pytest.mark.asyncio
+    async def test_quota_endpoint_requires_identity(self):
+        app = _make_app()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/v1/quota")
+        assert resp.status_code == 401
 
 
 class TestHealthEndpoint:

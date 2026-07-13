@@ -16,7 +16,6 @@ from prometheus_client import (
 from starlette.requests import Request
 from starlette.responses import Response
 
-# ── HTTP RED metrics ─────────────────────────────────────────────────
 HTTP_REQUEST_DURATION = Histogram(
     "http_request_duration_seconds",
     "HTTP request duration in seconds",
@@ -24,7 +23,6 @@ HTTP_REQUEST_DURATION = Histogram(
     buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120),
 )
 
-# ── Chatbot domain metrics ────────────────────────────────────────────
 CHATBOT_LLM_REQUESTS_TOTAL = Counter(
     "chatbot_llm_requests_total",
     "Total LLM calls by outcome",
@@ -72,7 +70,6 @@ CHATBOT_RERANK_DURATION_SECONDS = Histogram(
     "Latency of BGE cross-encoder reranker calls (seconds)",
     buckets=(0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2),
 )
-
 
 def setup_metrics(app) -> None:
     """Attach the timing middleware and /metrics endpoint to a FastAPI app."""

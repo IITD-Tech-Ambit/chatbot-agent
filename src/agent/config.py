@@ -15,7 +15,6 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # Server
     PORT: int = 3003
     HOST: str = "0.0.0.0"
     DEBUG: bool = False
@@ -39,10 +38,8 @@ class Settings(BaseSettings):
             return [o.strip() for o in v.split(",") if o.strip()]
         return ["*"]
 
-    # MongoDB
     MONGODB_URI: str = "mongodb://localhost:27017/research_db"
 
-    # OpenSearch
     OPENSEARCH_NODE: str = "http://localhost:9200"
     OPENSEARCH_USER: str = ""
     OPENSEARCH_PASSWORD: str = ""
@@ -50,30 +47,38 @@ class Settings(BaseSettings):
     OPENSEARCH_VERIFY_CERTS: bool = False
     OPENSEARCH_USE_SSL: bool = False
 
-    # Redis
     REDIS_URL: str = "redis://localhost:6379"
 
-    # Embedding service
+    # East-west transport: "grpc" routes embedding + faculty-for-query calls
+    # through Envoy (production mesh); "http" keeps direct REST for local dev.
+    MESH_TRANSPORT: str = "http"
+    ENVOY_GRPC_TARGET: str = "envoy:10000"
+
+    # gRPC listener for chat.v1.CheckQuota (served alongside the HTTP app)
+    GRPC_ENABLED: bool = True
+    GRPC_PORT: int = 50054
+
+    # Embedding service (HTTP fallback when MESH_TRANSPORT=http)
     EMBEDDING_SERVICE_URL: str = "http://localhost:8000"
     EMBEDDING_TIMEOUT_MS: int = 10_000
 
-    # Search API (existing Node.js search-api for faculty-for-topic)
+    # Search API (HTTP fallback when MESH_TRANSPORT=http)
     SEARCH_API_URL: str = "http://localhost:3001"
 
-    # xAI Grok LLM
+    # Per-user daily message quota (IST calendar day)
+    CHAT_QUOTA_DAILY: int = 5
+
     GROQ_API_KEY: str = ""
     GROQ_MODEL: str = "grok-4.3"
     GROQ_EXTRACT_MODEL: str = "grok-3-mini"  # cheap model for query parsing
     MAX_ANSWER_TOKENS: int = 1024
 
-    # Agent behaviour
     MAX_TOOL_ROUNDS: int = 1
     CHAT_TOP_K: int = 8
     CHAT_MAX_HISTORY_TURNS: int = 6
     CHAT_MAX_MESSAGE_LENGTH: int = 2000
     HISTORY_TOKEN_BUDGET: int = 800
 
-    # LLM response cache
     LLM_CACHE_TTL: int = 90
     EMBEDDING_CACHE_TTL: int = 86400
 

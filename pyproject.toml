@@ -23,6 +23,8 @@ dependencies = [
     "pydantic-settings>=2.5.0",
     "python-dotenv>=1.0.0",
     "sse-starlette>=2.1.0",
+    "grpcio>=1.66.0",
+    "protobuf>=4.25.0",
 ]
 
 [project.optional-dependencies]
