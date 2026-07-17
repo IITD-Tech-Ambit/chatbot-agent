@@ -15,9 +15,10 @@ python-dotenv>=1.0.0
 sse-starlette>=2.1.0
 prometheus-client>=0.20.0
 # East-west gRPC (embedding.v1 + search.v1 clients, chat.v1 server);
-# stubs are committed under src/{embedding,search,chat} (protos/gen_python.sh)
+# stubs come from the proto-registry (iitd_ambit_protos.{embedding,search,chat}.v1)
 grpcio>=1.66.0
 protobuf>=4.25.0
+iitd-tech-ambit-proto-stubs @ git+https://github.com/IITD-Tech-Ambit/proto-registry.git@release/v0.1.0#subdirectory=gen-python
 
 # Dev / test
 pytest>=8.0.0

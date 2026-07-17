@@ -6,7 +6,7 @@ import logging
 
 import grpc
 
-from embedding.v1 import embedding_pb2, embedding_pb2_grpc
+from iitd_ambit_protos.embedding.v1 import embedding_pb2, embedding_pb2_grpc
 
 logger = logging.getLogger(__name__)
 

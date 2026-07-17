@@ -8,7 +8,7 @@ from typing import Any
 import grpc
 import httpx
 
-from search.v1 import search_pb2, search_pb2_grpc
+from iitd_ambit_protos.search.v1 import search_pb2, search_pb2_grpc
 
 logger = logging.getLogger(__name__)
 
