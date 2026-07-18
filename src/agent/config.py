@@ -79,6 +79,14 @@ class Settings(BaseSettings):
     GROQ_EXTRACT_MODEL: str = "grok-3-mini"  # cheap model for query parsing
     MAX_ANSWER_TOKENS: int = 1024
 
+    # Outbound calls to api.x.ai need the campus proxy to reach the internet.
+    # Deliberately NOT the generic HTTP_PROXY/HTTPS_PROXY env vars: those are
+    # container-wide, so anything else in the container that also auto-honors
+    # them (e.g. Python's urllib, used by this image's own HEALTHCHECK to hit
+    # its own /health over loopback) would try to route through the proxy
+    # too. See src/agent/llm/groq_client.py and src/agent/rag/query_parser.py.
+    LLM_HTTP_PROXY_URL: str = ""
+
     MAX_TOOL_ROUNDS: int = 1
     CHAT_TOP_K: int = 8
     CHAT_MAX_HISTORY_TURNS: int = 6

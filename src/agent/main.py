@@ -86,6 +86,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         query_parser = QueryParser(
             api_key=settings.GROQ_API_KEY,
             model=settings.GROQ_EXTRACT_MODEL,
+            proxy_url=settings.LLM_HTTP_PROXY_URL or None,
         )
     else:
         query_parser = None
@@ -122,11 +123,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         api_key=settings.GROQ_API_KEY,
         model=settings.GROQ_MODEL,
         max_tokens=settings.MAX_ANSWER_TOKENS,
+        proxy_url=settings.LLM_HTTP_PROXY_URL or None,
     )
     answer_llm = make_answer_llm(
         api_key=settings.GROQ_API_KEY,
         model=settings.GROQ_MODEL,
         max_tokens=settings.MAX_ANSWER_TOKENS,
+        proxy_url=settings.LLM_HTTP_PROXY_URL or None,
     )
     app.state.tool_llm = tool_llm
     app.state.answer_llm = answer_llm

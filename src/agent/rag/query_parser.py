@@ -65,10 +65,20 @@ class QueryParser:
     instead of brittle regex patterns.
     """
 
-    def __init__(self, api_key: str, model: str = "grok-3-mini") -> None:
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "grok-3-mini",
+        proxy_url: str | None = None,
+    ) -> None:
+        import httpx
         from openai import AsyncOpenAI
 
-        self._client = AsyncOpenAI(api_key=api_key, base_url=_XAI_BASE_URL)
+        # Explicit LLM_HTTP_PROXY_URL, not the generic HTTP_PROXY/HTTPS_PROXY
+        # env vars — see agent.llm.groq_client for why (container-wide env
+        # leaking into e.g. this image's own urllib-based HEALTHCHECK).
+        http_client = httpx.AsyncClient(proxy=proxy_url, trust_env=False)
+        self._client = AsyncOpenAI(api_key=api_key, base_url=_XAI_BASE_URL, http_client=http_client)
         self._model = model
         self._cache: dict[str, ParsedQuery] = {}
 
