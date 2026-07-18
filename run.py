@@ -1,4 +1,5 @@
 """Entrypoint: run the chatbot-agent FastAPI server via uvicorn."""
+# test: verify GitHub App webhook auto-deploy fires on push to prod
 
 import uvicorn
 
