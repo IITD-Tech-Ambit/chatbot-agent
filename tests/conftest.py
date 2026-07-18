@@ -39,7 +39,7 @@ class FakeToolCallingLLM:
 
 
 class FakeNoToolLLM:
-    """LLM that never returns tool_calls (tests the force-tool fallback)."""
+    """LLM that never returns tool_calls."""
 
     def __init__(self, answer: str = "I don't know."):
         self._answer = answer
@@ -63,7 +63,6 @@ class FakeRedis:
     def __init__(self):
         self._store: dict[str, str] = {}
         self._ttls: dict[str, int] = {}
-        self._counters: dict[str, int] = {}
 
     async def get(self, key: str) -> str | None:
         return self._store.get(key)
@@ -73,11 +72,15 @@ class FakeRedis:
         self._ttls[key] = ttl
 
     async def incr(self, key: str) -> int:
-        self._counters[key] = self._counters.get(key, 0) + 1
-        return self._counters[key]
+        value = int(self._store.get(key, "0")) + 1
+        self._store[key] = str(value)
+        return value
 
     async def expire(self, key: str, seconds: int) -> None:
         self._ttls[key] = seconds
+
+    async def expireat(self, key: str, timestamp: int) -> None:
+        self._ttls[key] = timestamp
 
     async def ping(self) -> bool:
         return True
@@ -245,6 +248,18 @@ class FakeFacultyRepo:
                 result[kerberos] = dept_name
         return result
 
+    async def get_kerberos_to_faculty_map(self, kerberoses: list[str]) -> dict[str, dict[str, str]]:
+        result: dict[str, dict[str, str]] = {}
+        for f in self.faculty:
+            kerberos = (f.get("email") or "").split("@")[0].lower().strip()
+            if kerberos not in kerberoses:
+                continue
+            dept = f.get("department") or {}
+            dept_name = dept.get("name", "") if isinstance(dept, dict) else ""
+            name = f"{f.get('title', '')} {f.get('firstName', '')} {f.get('lastName', '')}".strip()
+            result[kerberos] = {"name": name, "department": dept_name}
+        return result
+
 
 class FakeResearchRepo:
     def __init__(self):
@@ -287,18 +302,38 @@ class FakeResearchRepo:
     async def kerberos_counts_for_ids(self, paper_ids: list[str], base_match: dict) -> list[dict]:
         return [{"_id": "testfaculty", "count": 10}]
 
-    async def find_interdisciplinary_papers(self, fields: list[str], limit: int = 10) -> list[dict]:
-        return self.papers[:limit]
-
     async def papers_by_kerberos(self, base_match: dict) -> list[dict]:
-        # Return fake kerberos-grouped counts for testing
         return [
             {"_id": "testfaculty", "count": 25},
             {"_id": "anshulk", "count": 15},
         ]
 
 
-# ── Fixtures ──
+# Fixtures
+
+def make_tool_deps(
+    faculty_repo=None,
+    research_repo=None,
+    retriever=None,
+    search_client=None,
+    config=None,
+):
+    """Build ToolDeps for unit tests (factories close over these deps)."""
+    from agent.config import settings
+    from agent.tools.deps import ToolDeps
+
+    class _EmptyRetriever:
+        async def retrieve(self, query, top_k=None, abstract_max_chars=150):
+            return []
+
+    return ToolDeps(
+        retriever=retriever if retriever is not None else _EmptyRetriever(),
+        faculty_repo=faculty_repo if faculty_repo is not None else FakeFacultyRepo(),
+        research_repo=research_repo if research_repo is not None else FakeResearchRepo(),
+        config=config or settings,
+        search_client=search_client,
+    )
+
 
 @pytest.fixture
 def fake_redis():

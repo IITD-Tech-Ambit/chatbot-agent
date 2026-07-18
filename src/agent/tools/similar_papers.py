@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
-from typing import Any
 
-from langchain_core.tools import tool
+from langchain_core.tools import BaseTool, tool
 from pydantic import BaseModel, Field
+
+from agent.tools.meta import annotate_tool
+from agent.tools.deps import ToolDeps
 
 
 class SimilarPapersArgs(BaseModel):
@@ -15,31 +17,40 @@ class SimilarPapersArgs(BaseModel):
     top_k: int = Field(default=5, description="Number of similar papers to return")
 
 
-@tool(args_schema=SimilarPapersArgs)
-async def find_similar_papers(title: str, abstract: str = "", top_k: int = 5) -> str:
-    """Find papers similar to a given paper by re-embedding its title and abstract."""
-    from agent.tools._registry import get_retriever
+def build_tool(deps: ToolDeps) -> BaseTool:
+    retriever = deps.retriever
 
-    retriever = get_retriever()
+    @tool(args_schema=SimilarPapersArgs)
+    async def find_similar_papers(title: str, abstract: str = "", top_k: int = 5) -> str:
+        """Find papers similar to a given paper by re-embedding its title and abstract."""
+        combined = f"{title}. {abstract}".strip()
+        try:
+            papers = await retriever.retrieve(combined, top_k=min(top_k, 10), abstract_max_chars=150)
+        except Exception as exc:
+            return json.dumps({
+                "reference": title,
+                "similar_papers": [],
+                "error": f"Retrieval failed: {type(exc).__name__}",
+            })
 
-    combined = f"{title}. {abstract}".strip()
-    try:
-        papers = await retriever.retrieve(combined, top_k=min(top_k, 10), abstract_max_chars=150)
-    except Exception as exc:
-        return json.dumps({"reference": title, "similar_papers": [], "error": f"Retrieval failed: {type(exc).__name__}"})
+        papers = [p for p in papers if p.get("title", "").lower().strip() != title.lower().strip()]
 
-    papers = [p for p in papers if p.get("title", "").lower().strip() != title.lower().strip()]
+        return json.dumps({
+            "reference": title,
+            "similar_papers": [
+                {
+                    "title": p["title"],
+                    "authors": p["authors"][:3],
+                    "year": p.get("publication_year"),
+                    "citations": p.get("citation_count", 0),
+                    "abstract": p["abstract"],
+                }
+                for p in papers[:top_k]
+            ],
+        }, default=str)
 
-    return json.dumps({
-        "reference": title,
-        "similar_papers": [
-            {
-                "title": p["title"],
-                "authors": p["authors"][:3],
-                "year": p.get("publication_year"),
-                "citations": p.get("citation_count", 0),
-                "abstract": p["abstract"],
-            }
-            for p in papers[:top_k]
-        ],
-    }, default=str)
+    return annotate_tool(
+        find_similar_papers,
+        thinking_label="Finding related work",
+        token_cap=deps.config.TOKEN_CAP_SEARCH_PAPERS,
+    )

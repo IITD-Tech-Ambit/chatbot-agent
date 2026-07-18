@@ -1,17 +1,14 @@
 """Tests for the LangGraph agent graph logic.
 
-Uses FakeToolCallingChatModel — no Ollama required.
-Tests: no-tool -> forced search, tool_rounds capped at MAX_TOOL_ROUNDS, budget guard.
+Uses FakeToolCallingChatModel — no live LLM required.
+Tests: tool routing, tool_rounds cap, budget guard.
 """
-
-import json
-from unittest.mock import AsyncMock, patch
 
 import pytest
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage
 
 from agent.graph.state import AgentState
-from agent.graph.nodes import agent_node, answer_node, route_after_agent, _enforce_context_budget, init_node_deps
+from agent.graph.nodes import make_agent_node, route_after_agent, _enforce_context_budget
 from agent.config import settings
 from tests.conftest import FakeToolCallingLLM, FakeNoToolLLM
 
@@ -21,7 +18,6 @@ class TestRouteAfterAgent:
         state: AgentState = {
             "messages": [AIMessage(content="", tool_calls=[{"id": "1", "name": "search_papers", "args": {"query": "x"}}])],
             "tool_rounds": 0,
-            "paper_sources": [],
         }
         assert route_after_agent(state) == "tools"
 
@@ -29,7 +25,6 @@ class TestRouteAfterAgent:
         state: AgentState = {
             "messages": [AIMessage(content="Here's your answer")],
             "tool_rounds": 0,
-            "paper_sources": [],
         }
         assert route_after_agent(state) == "answer"
 
@@ -38,7 +33,6 @@ class TestRouteAfterAgent:
         state: AgentState = {
             "messages": [AIMessage(content="")],
             "tool_rounds": 1,
-            "paper_sources": [],
         }
         assert route_after_agent(state) == "answer"
 
@@ -49,11 +43,10 @@ class TestAgentNode:
         llm = FakeToolCallingLLM(
             tool_calls=[{"id": "c1", "name": "search_papers", "args": {"query": "ML"}}],
         )
-        init_node_deps(tool_llm=llm, answer_llm=llm, tools=[])
+        agent_node = make_agent_node(llm, [])
         state: AgentState = {
             "messages": [HumanMessage(content="Tell me about ML")],
             "tool_rounds": 0,
-            "paper_sources": [],
         }
         result = await agent_node(state)
         last_msg = result["messages"][-1]
@@ -61,20 +54,17 @@ class TestAgentNode:
         assert len(last_msg.tool_calls) > 0
 
     @pytest.mark.asyncio
-    async def test_force_tool_when_no_calls(self):
-        """When LLM returns no tool_calls, agent_node should inject a forced search_papers."""
+    async def test_no_force_when_llm_skips_tools(self):
+        """When LLM returns no tool_calls, agent_node passes the response through."""
         llm = FakeNoToolLLM()
-        init_node_deps(tool_llm=llm, answer_llm=llm, tools=[])
+        agent_node = make_agent_node(llm, [])
         state: AgentState = {
             "messages": [HumanMessage(content="Tell me about quantum computing")],
             "tool_rounds": 0,
-            "paper_sources": [],
         }
         result = await agent_node(state)
         last_msg = result["messages"][-1]
-        assert hasattr(last_msg, "tool_calls")
-        assert last_msg.tool_calls[0]["name"] == "search_papers"
-        assert "quantum computing" in last_msg.tool_calls[0]["args"]["query"]
+        assert not getattr(last_msg, "tool_calls", None)
 
     @pytest.mark.asyncio
     async def test_early_exit_when_rounds_exhausted(self):
@@ -82,11 +72,10 @@ class TestAgentNode:
         llm = FakeToolCallingLLM(
             tool_calls=[{"id": "c1", "name": "search_papers", "args": {"query": "ML"}}],
         )
-        init_node_deps(tool_llm=llm, answer_llm=llm, tools=[])
+        agent_node = make_agent_node(llm, [])
         state: AgentState = {
             "messages": [HumanMessage(content="Tell me about ML")],
             "tool_rounds": settings.MAX_TOOL_ROUNDS,
-            "paper_sources": [],
         }
         result = await agent_node(state)
         last_msg = result["messages"][-1]
@@ -102,7 +91,8 @@ class TestBudgetGuard:
             AIMessage(content="", tool_calls=[{"id": "1", "name": "search_papers", "args": {}}]),
             ToolMessage(content=long_content, tool_call_id="1", name="search_papers"),
         ]
-        result = _enforce_context_budget(messages)
+        caps = {"search_papers": settings.TOKEN_CAP_SEARCH_PAPERS}
+        result = _enforce_context_budget(messages, caps)
         tool_msg = [m for m in result if isinstance(m, ToolMessage)][0]
         assert len(tool_msg.content) < len(long_content)
 
@@ -114,6 +104,7 @@ class TestBudgetGuard:
             AIMessage(content="", tool_calls=[{"id": "1", "name": "search_papers", "args": {}}]),
             ToolMessage(content=short_content, tool_call_id="1", name="search_papers"),
         ]
-        result = _enforce_context_budget(messages)
+        caps = {"search_papers": settings.TOKEN_CAP_SEARCH_PAPERS}
+        result = _enforce_context_budget(messages, caps)
         tool_msg = [m for m in result if isinstance(m, ToolMessage)][0]
         assert tool_msg.content == short_content

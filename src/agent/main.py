@@ -26,7 +26,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     if not settings.GROQ_API_KEY:
         raise RuntimeError("GROQ_API_KEY is required but not set — cannot start without an xAI API key")
 
-    # ── Data layer ──
     from agent.data import mongo, opensearch, redis as redis_mod
 
     db = await mongo.connect(settings.MONGODB_URI)
@@ -44,26 +43,41 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     redis_client = await redis_mod.connect(settings.REDIS_URL)
     app.state.redis = redis_client
 
-    # ── Repositories ──
     from agent.repositories.faculty_repo import FacultyRepository
     from agent.repositories.research_repo import ResearchRepository
 
     faculty_repo = FacultyRepository(db)
     research_repo = ResearchRepository(db)
 
-    # Expose repositories on app.state for fast-path routing
     app.state.faculty_repo = faculty_repo
     app.state.research_repo = research_repo
 
-    # ── RAG ──
+    # Mesh transports (composition root: gRPC via Envoy or HTTP for dev)
     from agent.rag.embeddings import EmbeddingClient
     from agent.rag.query_parser import QueryParser
     from agent.rag.retriever import Retriever
 
+    use_grpc = settings.MESH_TRANSPORT.lower() == "grpc"
+    if use_grpc:
+        from agent.transports.grpc_embedding import GrpcEmbeddingTransport
+        from agent.transports.faculty_search import GrpcFacultySearchClient
+
+        embedding_transport = GrpcEmbeddingTransport(
+            settings.ENVOY_GRPC_TARGET, timeout_ms=settings.EMBEDDING_TIMEOUT_MS
+        )
+        search_client = GrpcFacultySearchClient(settings.ENVOY_GRPC_TARGET)
+    else:
+        from agent.transports.http_embedding import HttpEmbeddingTransport
+        from agent.transports.faculty_search import HttpFacultySearchClient
+
+        embedding_transport = HttpEmbeddingTransport(
+            settings.EMBEDDING_SERVICE_URL, timeout_ms=settings.EMBEDDING_TIMEOUT_MS
+        )
+        search_client = HttpFacultySearchClient(settings.SEARCH_API_URL)
+
     embedding_client = EmbeddingClient(
-        base_url=settings.EMBEDDING_SERVICE_URL,
+        transport=embedding_transport,
         redis_client=redis_client,
-        timeout_ms=settings.EMBEDDING_TIMEOUT_MS,
         cache_ttl=settings.EMBEDDING_CACHE_TTL,
     )
     app.state.embedding_client = embedding_client
@@ -89,18 +103,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         query_parser=query_parser,
     )
 
-    # ── Tool registry ──
-    from agent.tools import _registry
+    from agent.tools.deps import ToolDeps
+    from agent.tools._registry import build_tools
 
-    _registry.init(
+    tool_deps = ToolDeps(
         retriever=retriever,
         faculty_repo=faculty_repo,
         research_repo=research_repo,
         config=settings,
+        search_client=search_client,
     )
-    app.state.tools = _registry.all_tools()
+    tools = build_tools(tool_deps)
+    app.state.tools = tools
 
-    # ── LLM (xAI Grok) ──
     from agent.llm.groq_client import make_tool_llm, make_answer_llm
 
     tool_llm = make_tool_llm(
@@ -116,15 +131,22 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.tool_llm = tool_llm
     app.state.answer_llm = answer_llm
 
-    # ── Graph ──
     from agent.graph.builder import build_graph
 
-    app.state.graph = build_graph(tool_llm, answer_llm)
+    app.state.graph = build_graph(tool_llm, answer_llm, tools)
 
-    # ── Services ──
     from agent.services.cache import LLMCache
+    from agent.services.quota import RedisQuotaStore
 
     app.state.llm_cache = LLMCache(redis_client, ttl=settings.LLM_CACHE_TTL)
+    app.state.quota_store = RedisQuotaStore(redis_client, daily_limit=settings.CHAT_QUOTA_DAILY)
+
+    # chat.v1 gRPC listener (CheckQuota)
+    grpc_server = None
+    if settings.GRPC_ENABLED:
+        from agent.grpc_server import start_grpc_server
+
+        grpc_server = await start_grpc_server(app.state.quota_store, settings.GRPC_PORT)
 
     logger.info(
         "Chatbot agent started on http://%s:%s (model: %s via xAI)",
@@ -132,7 +154,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     )
     yield
 
-    # ── Shutdown ──
+    if grpc_server is not None:
+        await grpc_server.stop(grace=5)
+    close_transport = getattr(embedding_transport, "close", None)
+    if close_transport:
+        await close_transport()
+    close_search = getattr(search_client, "close", None)
+    if close_search:
+        await close_search()
     await opensearch.close()
     await redis_mod.close()
     await mongo.close()
@@ -163,7 +192,6 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
     )
 
 
-# ── Routes ──
 from agent.api.routes_health import router as health_router
 from agent.api.routes_chat import router as chat_router
 

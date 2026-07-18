@@ -61,7 +61,6 @@ async def run_e2e_eval(
     errors: list[dict] = []
 
     async with httpx.AsyncClient(timeout=timeout_s) as client:
-        # Research queries from golden set or defaults
         queries = golden_queries or [
             {"id": f"e2e-{i}", "query": q, "relevant": {}}
             for i, q in enumerate(RESEARCH_E2E_QUERIES)

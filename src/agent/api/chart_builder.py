@@ -19,7 +19,6 @@ from agent.api.sse_events import (
     PieChartData,  # kept for compare_faculty and other future pie uses
 )
 
-
 def build_chart_for_tool(tool_name: str, tool_output: dict[str, Any]) -> ChartEvent | None:
     builder = _CHART_BUILDERS.get(tool_name)
     if not builder:
@@ -28,9 +27,6 @@ def build_chart_for_tool(tool_name: str, tool_output: dict[str, Any]) -> ChartEv
     if chart_data is None:
         return None
     return ChartEvent(tool_name=tool_name, chart=chart_data)
-
-
-# ── Per-tool builders ──
 
 def _build_research_trends_chart(data: dict[str, Any]) -> LineChartData | None:
     trend = data.get("trend", [])
@@ -50,7 +46,6 @@ def _build_research_trends_chart(data: dict[str, Any]) -> LineChartData | None:
         series=[ChartSeries(label=topic, data=points)],
     )
 
-
 def _build_compare_faculty_chart(data: dict[str, Any]) -> BarChartData | None:
     comparison = data.get("comparison", [])
     if len(comparison) < 2:
@@ -69,7 +64,6 @@ def _build_compare_faculty_chart(data: dict[str, Any]) -> BarChartData | None:
         series=series,
     )
 
-
 def _build_department_profile_chart(data: dict[str, Any]) -> BarChartData | None:
     by_year = data.get("publication_stats", {}).get("papers_by_recent_year", [])
     if not by_year:
@@ -86,7 +80,6 @@ def _build_department_profile_chart(data: dict[str, Any]) -> BarChartData | None
         categories=[str(y["year"]) for y in by_year_sorted],
         series=[{"label": "Papers", "data": [y["count"] for y in by_year_sorted]}],
     )
-
 
 def _build_publication_stats_chart(data: dict[str, Any]) -> ChartPayload | None:
     groups = data.get("groups", [])
@@ -118,7 +111,6 @@ def _build_publication_stats_chart(data: dict[str, Any]) -> ChartPayload | None:
         categories=[str(g.get(label_key, "Unknown")) for g in top_sorted],
         series=[{"label": "Papers", "data": [g["papers"] for g in top_sorted]}],
     )
-
 
 _CHART_BUILDERS: dict[str, Callable[[dict[str, Any]], ChartPayload | None]] = {
     "get_research_trends": _build_research_trends_chart,

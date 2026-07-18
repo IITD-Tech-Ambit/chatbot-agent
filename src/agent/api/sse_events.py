@@ -10,29 +10,23 @@ from typing import Any, Literal, Union
 
 from pydantic import BaseModel
 
-
 class StatusEvent(BaseModel):
     text: str
-
 
 class ThinkingEvent(BaseModel):
     """Streamed insight while agent processes — replaces raw tool-name exposure."""
     step: str
     detail: str | None = None
 
-
 class TokenEvent(BaseModel):
     text: str
-
 
 class DoneEvent(BaseModel):
     took_ms: int
     cached: bool = False
 
-
 class ErrorEvent(BaseModel):
     message: str
-
 
 class SourcePaper(BaseModel):
     index: int | None = None
@@ -49,18 +43,13 @@ class SourcePaper(BaseModel):
     kerberos: str | None = None
     faculty_name: str | None = None
 
-
-# ── Chart payloads ──
-
 class DataPoint(BaseModel):
     x: str | int | float
     y: int | float
 
-
 class ChartSeries(BaseModel):
     label: str
     data: list[DataPoint]
-
 
 class LineChartData(BaseModel):
     chart_type: Literal["line"] = "line"
@@ -68,7 +57,6 @@ class LineChartData(BaseModel):
     x_label: str = ""
     y_label: str = ""
     series: list[ChartSeries]
-
 
 class BarChartData(BaseModel):
     chart_type: Literal["bar"] = "bar"
@@ -79,15 +67,12 @@ class BarChartData(BaseModel):
     categories: list[str]
     series: list[dict[str, Any]]
 
-
 class PieChartData(BaseModel):
     chart_type: Literal["pie"] = "pie"
     title: str
     slices: list[dict[str, Any]]
 
-
 ChartPayload = Union[LineChartData, BarChartData, PieChartData]
-
 
 class ChartEvent(BaseModel):
     tool_name: str

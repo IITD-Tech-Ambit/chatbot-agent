@@ -10,8 +10,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from agent.repositories.faculty_repo import FacultyRepository
-from agent.repositories.research_repo import ResearchRepository
+from agent.repositories.protocols import IFacultyRepository, IResearchRepository
 
 
 @dataclass
@@ -21,20 +20,15 @@ class RouteMatch:
 
 
 PATTERNS: list[tuple[re.Pattern, str]] = [  # type: ignore[type-arg]
-    # ── top faculty by h-index / citations ──
     (re.compile(r"top\s+\d*\s*(?:professor|faculty|researcher|scientist)s?\s+(?:by\s+)?(?:h[.\-\s]?index|h-index)", re.I), "top_faculty_hindex"),
     (re.compile(r"(?:highest|best|most)\s+h[.\-\s]?index", re.I), "top_faculty_hindex"),
     (re.compile(r"top\s+\d*\s*(?:professor|faculty|researcher|scientist)s?\s+(?:by\s+)?citation", re.I), "top_faculty_citations"),
     (re.compile(r"most\s+cited\s+(?:professor|faculty|researcher|scientist)s?", re.I), "top_faculty_citations"),
     (re.compile(r"(?:rank(?:ed|ing)?)\s+(?:by|on)\s+(?:h[.\-\s]?index|citations?)", re.I), "top_faculty_hindex"),
-    # ── per-name metric lookups ──
     (re.compile(r"h[.\-\s]?index\s+(?:of|for)\s+(.+)", re.I), "get_h_index"),
     (re.compile(r"citation(?:s| count|count)?\s+(?:of|for)\s+(.+)", re.I), "get_citations"),
-    # ── faculty in a specific department (must come before broad faculty-count patterns) ──
     (re.compile(r"(?:faculty|professors?)\s+(?:in|from|of)\s+(.+?)\s*(?:dept|department)?\.?\s*$", re.I), "get_faculty_by_dept"),
-    # ── papers by a specific author ──
     (re.compile(r"papers?\s+by\s+(.+)", re.I), "get_papers_by_author"),
-    # ── department listing — ANCHORED: departments must be the whole point of the query ──
     # ^ and $ ensure "departments" cannot be buried as context inside a longer analytical sentence.
     # Covers: "what/which/list/show/tell me departments [at IIT]", "IIT Delhi departments", etc.
     # Does NOT match: "plot ML across all the departments" — "departments" is not the leading subject.
@@ -62,7 +56,6 @@ PATTERNS: list[tuple[re.Pattern, str]] = [  # type: ignore[type-arg]
         r"\s*\??\s*$",
         re.I,
     ), "list_departments"),
-    # ── faculty / professor count — anchored to a direct count question ──
     (re.compile(
         r"^\s*(?:how\s+many|total(?:\s+number\s+of)?|number\s+of|count\s+of|strength\s+of)\s+"
         r"(?:the\s+)?(?:faculty|professors?|teachers?|staff)\b"
@@ -89,8 +82,8 @@ def match_structured(message: str) -> RouteMatch | None:
 
 async def execute_structured(
     route: RouteMatch,
-    faculty_repo: FacultyRepository,
-    research_repo: ResearchRepository,
+    faculty_repo: IFacultyRepository,
+    research_repo: IResearchRepository,
 ) -> dict[str, Any]:
     handlers = {
         "get_h_index": _get_h_index,
@@ -108,7 +101,7 @@ async def execute_structured(
     return await fn(route.capture, faculty_repo, research_repo)
 
 
-async def _get_h_index(name: str, faculty_repo: FacultyRepository, _: ResearchRepository) -> dict[str, Any]:
+async def _get_h_index(name: str, faculty_repo: IFacultyRepository, _: IResearchRepository) -> dict[str, Any]:
     from agent.guardrails.guardrails import name_tokens, faculty_name_matches
 
     tokens = name_tokens(name)
@@ -122,7 +115,7 @@ async def _get_h_index(name: str, faculty_repo: FacultyRepository, _: ResearchRe
     return {"error": f'No faculty named "{name}" found.'}
 
 
-async def _get_citations(name: str, faculty_repo: FacultyRepository, _: ResearchRepository) -> dict[str, Any]:
+async def _get_citations(name: str, faculty_repo: IFacultyRepository, _: IResearchRepository) -> dict[str, Any]:
     from agent.guardrails.guardrails import name_tokens, faculty_name_matches
 
     tokens = name_tokens(name)
@@ -136,7 +129,7 @@ async def _get_citations(name: str, faculty_repo: FacultyRepository, _: Research
     return {"error": f'No faculty named "{name}" found.'}
 
 
-async def _get_faculty_by_dept(dept_name: str, faculty_repo: FacultyRepository, _: ResearchRepository) -> dict[str, Any]:
+async def _get_faculty_by_dept(dept_name: str, faculty_repo: IFacultyRepository, _: IResearchRepository) -> dict[str, Any]:
     dept = await faculty_repo.find_department(dept_name)
     if not dept:
         return {"error": f'No department matching "{dept_name}" was found.'}
@@ -155,7 +148,7 @@ async def _get_faculty_by_dept(dept_name: str, faculty_repo: FacultyRepository, 
     return {"text": "\n".join(lines)}
 
 
-async def _get_papers_by_author(name: str, faculty_repo: FacultyRepository, research_repo: ResearchRepository) -> dict[str, Any]:
+async def _get_papers_by_author(name: str, faculty_repo: IFacultyRepository, research_repo: IResearchRepository) -> dict[str, Any]:
     from agent.guardrails.guardrails import name_tokens, faculty_name_matches
 
     tokens = name_tokens(name)
@@ -179,7 +172,7 @@ async def _get_papers_by_author(name: str, faculty_repo: FacultyRepository, rese
     return {"error": f'No faculty named "{name}" found.'}
 
 
-async def _list_departments(_: str, faculty_repo: FacultyRepository, __: ResearchRepository) -> dict[str, Any]:
+async def _list_departments(_: str, faculty_repo: IFacultyRepository, __: IResearchRepository) -> dict[str, Any]:
     all_depts = await faculty_repo.list_all_departments()
     grouped: dict[str, list[str]] = {}
     for dept in all_depts:
@@ -195,12 +188,12 @@ async def _list_departments(_: str, faculty_repo: FacultyRepository, __: Researc
     return {"text": "\n".join(lines)}
 
 
-async def _get_total_faculty_count(_: str, faculty_repo: FacultyRepository, __: ResearchRepository) -> dict[str, Any]:
+async def _get_total_faculty_count(_: str, faculty_repo: IFacultyRepository, __: IResearchRepository) -> dict[str, Any]:
     total = await faculty_repo.count_all_faculty()
     return {"text": f"IIT Delhi has **{total}** faculty members across all departments."}
 
 
-async def _top_faculty_hindex(_: str, faculty_repo: FacultyRepository, __: ResearchRepository) -> dict[str, Any]:
+async def _top_faculty_hindex(_: str, faculty_repo: IFacultyRepository, __: IResearchRepository) -> dict[str, Any]:
     docs = await faculty_repo.find_top_faculty_global(sort_by="h_index", limit=10)
     if not docs:
         return {"error": "No faculty data available."}
@@ -215,7 +208,7 @@ async def _top_faculty_hindex(_: str, faculty_repo: FacultyRepository, __: Resea
     return {"text": "\n".join(lines)}
 
 
-async def _top_faculty_citations(_: str, faculty_repo: FacultyRepository, __: ResearchRepository) -> dict[str, Any]:
+async def _top_faculty_citations(_: str, faculty_repo: IFacultyRepository, __: IResearchRepository) -> dict[str, Any]:
     docs = await faculty_repo.find_top_faculty_global(sort_by="citation_count", limit=10)
     if not docs:
         return {"error": "No faculty data available."}

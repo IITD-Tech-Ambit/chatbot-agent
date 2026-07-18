@@ -39,8 +39,6 @@ class ResearchRepository:
     def __init__(self, db: AsyncIOMotorDatabase) -> None:
         self._coll = db["researchmetadatascopus"]
 
-    # ── Hydrate from OpenSearch mongo_ids ──
-
     async def find_by_ids(self, ids: list[str], fields: dict[str, int] | None = None) -> list[dict[str, Any]]:
         from bson import ObjectId
 
@@ -57,8 +55,6 @@ class ResearchRepository:
         docs = await cursor.to_list(length=len(oids))
         doc_map = {str(d["_id"]): d for d in docs}
         return [doc_map[i] for i in [str(o) for o in oids] if i in doc_map]
-
-    # ── Publication stats ──
 
     async def count_documents(self, match: dict) -> int:
         return await self._coll.count_documents(match)
@@ -77,8 +73,6 @@ class ResearchRepository:
             .limit(limit)
         )
         return await cursor.to_list(length=limit)
-
-    # ── Faculty profile: parallel aggregations ──
 
     async def faculty_publication_stats(self, match: dict) -> dict[str, Any] | None:
         import asyncio
@@ -132,8 +126,6 @@ class ResearchRepository:
             ],
         }
 
-    # ── Department stats ──
-
     async def department_stats(self, match: dict) -> dict[str, Any]:
         import asyncio
 
@@ -161,8 +153,6 @@ class ResearchRepository:
             ],
         }
 
-    # ── Papers grouped by kerberos (for department attribution) ──
-
     async def papers_by_kerberos(self, base_match: dict) -> list[dict[str, Any]]:
         """Returns [{_id: kerberos_prefix, count: int}] for papers that have a kerberos field."""
         match = {
@@ -175,8 +165,6 @@ class ResearchRepository:
             {"$sort": {"count": -1}},
             {"$limit": 50000},
         ])
-
-    # ── Global publication stats ──
 
     async def global_stats(self, base_match: dict, dimension: str, sort_field: str, limit: int = 25) -> tuple[int, list[dict]]:
         import asyncio
@@ -191,8 +179,6 @@ class ResearchRepository:
             ]),
         )
         return total, buckets
-
-    # ── Research trends (ID-based — caller uses retriever to find IDs) ──
 
     async def trend_by_ids(
         self, paper_ids: list[str], year_from: int | None, year_to: int | None
@@ -239,13 +225,3 @@ class ResearchRepository:
             {"$sort": {"count": -1}},
             {"$limit": 50000},
         ])
-
-    # ── Interdisciplinary papers ──
-
-    async def find_interdisciplinary_papers(
-        self, fields: list[str], limit: int = 10
-    ) -> list[dict[str, Any]]:
-        """Stub fallback — the tool uses the OpenSearch retriever instead of this method.
-        Kept for interface compatibility; returns empty so the tool falls back gracefully.
-        """
-        return []

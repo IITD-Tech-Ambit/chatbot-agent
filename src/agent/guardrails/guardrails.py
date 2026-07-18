@@ -7,8 +7,6 @@ from __future__ import annotations
 import re
 from typing import Literal
 
-# ── Canned replies ──
-
 CANNED = {
     "greeting": (
         "Hello! I'm the Research Assistant for IIT Delhi's research portal.\n\n"
@@ -49,8 +47,6 @@ CANNED = {
         '- "How many papers has the Computer Science department published?"'
     ),
 }
-
-# ── Pattern groups ──
 
 GREETING_PATTERNS = [
     re.compile(r"^\s*(hi|hello|hey|hii+|hola|howdy|greetings|sup|yo|namaste|namaskar)\s*[!?.]*\s*$", re.I),
@@ -159,12 +155,8 @@ META_NAME_WORDS = frozenset({
     "professor", "prof", "doctor", "dr", "sir", "madam", "human", "robot",
 })
 
-
 def _matches_any(text: str, patterns: list[re.Pattern]) -> bool:  # type: ignore[type-arg]
     return any(p.search(text) for p in patterns)
-
-
-# ── Public API ──
 
 def sanitize_message(raw: str, max_length: int = 2000) -> str:
     text = str(raw or "")
@@ -172,9 +164,7 @@ def sanitize_message(raw: str, max_length: int = 2000) -> str:
     text = re.sub(r"[ \t]{4,}", "   ", text).strip()
     return text[:max_length]
 
-
 MetaType = Literal["greeting", "identity", "capabilities", "refusal", "off_topic"]
-
 
 def classify_meta(message: str) -> MetaType | None:
     if _matches_any(message, GREETING_PATTERNS):
@@ -191,14 +181,11 @@ def classify_meta(message: str) -> MetaType | None:
         return "off_topic"
     return None
 
-
 def canned_reply(meta_type: str) -> str:
     return CANNED.get(meta_type, CANNED["refusal"])
 
-
 def detect_injection(message: str) -> bool:
     return _matches_any(message, INJECTION_PATTERNS) or _matches_any(message, PROMPT_REVEAL_PATTERNS)
-
 
 def name_tokens(name: str) -> list[str]:
     cleaned = TITLE_RE.sub(" ", str(name or "")).lower()
@@ -210,7 +197,6 @@ def name_tokens(name: str) -> list[str]:
         if len(t.replace(".", "").replace("-", "").strip()) >= 2
         and t.replace(".", "").replace("-", "").strip() not in META_NAME_WORDS
     ]
-
 
 def faculty_name_matches(requested_name: str, first_name: str, last_name: str) -> bool:
     requested = name_tokens(requested_name)

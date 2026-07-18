@@ -7,10 +7,11 @@ import logging
 from collections import Counter
 from typing import Optional
 
-from langchain_core.tools import tool
+from langchain_core.tools import BaseTool, tool
 from pydantic import BaseModel, Field, model_validator
 
-from agent.tools._registry import get_retriever, get_research_repo, get_config
+from agent.tools.meta import annotate_tool
+from agent.tools.deps import ToolDeps
 
 logger = logging.getLogger(__name__)
 
@@ -38,76 +39,83 @@ class InterdisciplinaryPapersArgs(BaseModel):
         return self
 
 
-@tool("find_interdisciplinary_papers", args_schema=InterdisciplinaryPapersArgs)
-async def find_interdisciplinary_papers(
-    fields: list[str],
-    year_from: Optional[int] = None,
-    year_to: Optional[int] = None,
-    limit: int = 8,
-) -> str:
-    """Find IIT Delhi research papers that sit at the intersection of multiple research fields or topics (e.g. ML + healthcare, nanotechnology + energy)."""
-    retriever = get_retriever()
-    research_repo = get_research_repo()
-    cfg = get_config()
+def build_tool(deps: ToolDeps) -> BaseTool:
+    retriever = deps.retriever
+    research_repo = deps.research_repo
+    cap = deps.config.TOKEN_CAP_INTERDISCIPLINARY
 
-    # Retrieve top-k papers per field using hybrid BM25+kNN
-    per_field_ids: list[set[str]] = []
-    for field in fields:
-        try:
-            papers = await retriever.retrieve(field, top_k=30, abstract_max_chars=0)
-            per_field_ids.append({p["id"] for p in papers if p.get("id")})
-        except Exception as exc:
-            logger.warning("Retrieval failed for field '%s': %s", field, exc)
-            per_field_ids.append(set())
+    @tool("find_interdisciplinary_papers", args_schema=InterdisciplinaryPapersArgs)
+    async def find_interdisciplinary_papers(
+        fields: list[str],
+        year_from: Optional[int] = None,
+        year_to: Optional[int] = None,
+        limit: int = 8,
+    ) -> str:
+        """Find IIT Delhi research papers that sit at the intersection of multiple research fields or topics (e.g. ML + healthcare, nanotechnology + energy)."""
+        per_field_ids: list[set[str]] = []
+        for field in fields:
+            try:
+                papers = await retriever.retrieve(field, top_k=30, abstract_max_chars=0)
+                per_field_ids.append({p["id"] for p in papers if p.get("id")})
+            except Exception as exc:
+                logger.warning("Retrieval failed for field '%s': %s", field, exc)
+                per_field_ids.append(set())
 
-    if not any(per_field_ids):
-        return json.dumps({"fields": fields, "papers": [], "message": "No papers found."})
+        if not any(per_field_ids):
+            return json.dumps({"fields": fields, "papers": [], "message": "No papers found."})
 
-    # Intersection first; fall back to papers appearing in ≥2 fields
-    common_ids: set[str] = set.intersection(*per_field_ids) if len(per_field_ids) > 1 else per_field_ids[0]
-    if not common_ids:
-        counter: Counter = Counter(pid for s in per_field_ids for pid in s)
-        common_ids = {pid for pid, cnt in counter.most_common(limit * 3) if cnt >= 2}
+        # Intersection first; fall back to papers appearing in ≥2 fields
+        common_ids: set[str] = set.intersection(*per_field_ids) if len(per_field_ids) > 1 else per_field_ids[0]
+        if not common_ids:
+            counter: Counter = Counter(pid for s in per_field_ids for pid in s)
+            common_ids = {pid for pid, cnt in counter.most_common(limit * 3) if cnt >= 2}
 
-    if not common_ids:
-        # MongoDB fallback
-        mongo_docs = await research_repo.find_interdisciplinary_papers(fields, limit=limit)
-    else:
+        if not common_ids:
+            return json.dumps({
+                "fields": fields,
+                "papers": [],
+                "message": "No interdisciplinary papers found for these fields.",
+            })
+
         ids_list = list(common_ids)[: limit * 2]
         mongo_docs = await research_repo.find_by_ids(ids_list)
 
-    # Apply year filter post-fetch
-    if year_from or year_to:
-        mongo_docs = [
-            d for d in mongo_docs
-            if (not year_from or (d.get("publication_year") or 0) >= year_from)
-            and (not year_to or (d.get("publication_year") or 9999) <= year_to)
+        if year_from or year_to:
+            mongo_docs = [
+                d for d in mongo_docs
+                if (not year_from or (d.get("publication_year") or 0) >= year_from)
+                and (not year_to or (d.get("publication_year") or 9999) <= year_to)
+            ]
+
+        mongo_docs = mongo_docs[:limit]
+
+        papers = [
+            {
+                "title": d.get("title", ""),
+                "abstract": (d.get("abstract") or "")[:150],
+                "authors": [a.get("author_name", "") for a in (d.get("authors") or [])[:4]],
+                "year": d.get("publication_year"),
+                "field": d.get("field_associated", ""),
+                "citations": d.get("citation_count", 0),
+                "link": d.get("link", ""),
+            }
+            for d in mongo_docs
         ]
 
-    mongo_docs = mongo_docs[:limit]
-
-    papers = [
-        {
-            "title": d.get("title", ""),
-            "abstract": (d.get("abstract") or "")[:150],
-            "authors": [a.get("author_name", "") for a in (d.get("authors") or [])[:4]],
-            "year": d.get("publication_year"),
-            "field": d.get("field_associated", ""),
-            "citations": d.get("citation_count", 0),
-            "link": d.get("link", ""),
+        result = {
+            "fields": fields,
+            "year_range": {"from": year_from, "to": year_to},
+            "count": len(papers),
+            "papers": papers,
         }
-        for d in mongo_docs
-    ]
 
-    result = {
-        "fields": fields,
-        "year_range": {"from": year_from, "to": year_to},
-        "count": len(papers),
-        "papers": papers,
-    }
+        output = json.dumps(result, default=str)
+        if len(output) > cap:
+            output = output[:cap] + '..."}'
+        return output
 
-    output = json.dumps(result, default=str)
-    cap = cfg.TOKEN_CAP_INTERDISCIPLINARY
-    if len(output) > cap:
-        output = output[:cap] + '..."}'
-    return output
+    return annotate_tool(
+        find_interdisciplinary_papers,
+        thinking_label="Exploring interdisciplinary research",
+        token_cap=cap,
+    )

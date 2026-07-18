@@ -90,6 +90,7 @@ class TestChatbotE2E:
         resp = httpx.post(
             f"{CHATBOT_URL}/api/v1/chat",
             json={"message": query, "history": []},
+            headers={"x-user-id": "test-eval-user"},
             timeout=60.0,
         )
         assert resp.status_code == 200, f"Status {resp.status_code}: {resp.text[:200]}"
@@ -112,6 +113,7 @@ class TestChatbotE2E:
         resp = httpx.post(
             f"{CHATBOT_URL}/api/v1/chat",
             json={"message": query, "history": []},
+            headers={"x-user-id": "test-eval-user"},
             timeout=10.0,
         )
         assert resp.status_code == 200

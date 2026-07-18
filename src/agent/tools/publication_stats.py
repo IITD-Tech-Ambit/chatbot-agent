@@ -9,8 +9,11 @@ from __future__ import annotations
 import json
 from typing import Optional
 
-from langchain_core.tools import tool
+from langchain_core.tools import BaseTool, tool
 from pydantic import BaseModel, Field
+
+from agent.tools.meta import annotate_tool
+from agent.tools.deps import ToolDeps
 
 
 class PublicationStatsArgs(BaseModel):
@@ -21,77 +24,87 @@ class PublicationStatsArgs(BaseModel):
     group_by: Optional[str] = Field(default=None, description="Group results by: department, year, or document_type")
 
 
-@tool(args_schema=PublicationStatsArgs)
-async def get_publication_stats(
-    department: str | None = None,
-    topic: str | None = None,
-    year_from: int | None = None,
-    year_to: int | None = None,
-    group_by: str | None = None,
-) -> str:
-    """Get publication count statistics for IIT Delhi. Supports filtering by department, topic, and year range.
-    Use group_by='department' to see papers per department. Add topic= to scope to a research area."""
-    from agent.tools._registry import get_faculty_repo, get_research_repo, get_retriever
+def build_tool(deps: ToolDeps) -> BaseTool:
+    faculty_repo = deps.faculty_repo
+    research_repo = deps.research_repo
+    retriever = deps.retriever
 
-    faculty_repo = get_faculty_repo()
-    research_repo = get_research_repo()
-    retriever = get_retriever()
+    @tool(args_schema=PublicationStatsArgs)
+    async def get_publication_stats(
+        department: str | None = None,
+        topic: str | None = None,
+        year_from: int | None = None,
+        year_to: int | None = None,
+        group_by: str | None = None,
+    ) -> str:
+        """Get publication count statistics for IIT Delhi. Supports filtering by department, topic, and year range.
+        Use group_by='department' to see papers per department. Add topic= to scope to a research area."""
+        year_match: dict = {}
+        if year_from:
+            year_match["$gte"] = year_from
+        if year_to:
+            year_match["$lte"] = year_to
+        base_match = {"publication_year": year_match} if year_match else {}
 
-    year_match: dict = {}
-    if year_from:
-        year_match["$gte"] = year_from
-    if year_to:
-        year_match["$lte"] = year_to
-    base_match = {"publication_year": year_match} if year_match else {}
+        topic_ids: list[str] | None = None
+        if topic:
+            try:
+                hits = await retriever.retrieve(topic, top_k=400)
+            except Exception as exc:
+                return json.dumps({
+                    "topic": topic,
+                    "total_papers": 0,
+                    "groups": [],
+                    "error": f"Retrieval failed: {type(exc).__name__}",
+                })
+            topic_ids = [r["id"] for r in hits if r.get("id")]
+            if not topic_ids:
+                return json.dumps({
+                    "topic": topic,
+                    "total_papers": 0,
+                    "groups": [],
+                    "message": f"No publications found for topic '{topic}' in the IIT Delhi database.",
+                })
 
-    topic_ids: list[str] | None = None
-    if topic:
-        try:
-            hits = await retriever.retrieve(topic, top_k=400)
-        except Exception as exc:
-            return json.dumps({"topic": topic, "total_papers": 0, "groups": [], "error": f"Retrieval failed: {type(exc).__name__}"})
-        topic_ids = [r["id"] for r in hits if r.get("id")]
-        if not topic_ids:
-            return json.dumps({
-                "topic": topic,
-                "total_papers": 0,
-                "groups": [],
-                "message": f"No publications found for topic '{topic}' in the IIT Delhi database.",
-            })
+        if department:
+            result = await _department_stats(department, base_match, topic_ids, faculty_repo, research_repo)
+            return json.dumps(result, default=str)
 
-    if department:
-        result = await _department_stats(department, base_match, topic_ids, faculty_repo, research_repo)
+        if not group_by or group_by == "department":
+            result = await _global_department_stats(
+                base_match, year_from, year_to, topic, topic_ids, faculty_repo, research_repo
+            )
+            return json.dumps(result, default=str)
+
+        if topic_ids is not None:
+            result = await _aggregate_by_dimension_for_ids(
+                topic_ids, base_match, group_by, year_from, year_to, research_repo
+            )
+        else:
+            dimension = {"year": "$publication_year", "document_type": "$document_type"}.get(
+                group_by, "$publication_year"
+            )
+            sort_field = "_id" if group_by == "year" else "count"
+            total, buckets = await research_repo.global_stats(base_match, dimension, sort_field, limit=25)
+            label_key = {"year": "year", "document_type": "type"}.get(group_by, "year")
+            result = {
+                "total_papers": total,
+                "year_from": year_from,
+                "year_to": year_to,
+                "grouped_by": group_by,
+                "groups": [
+                    {label_key: b["_id"], "papers": b["count"]}
+                    for b in buckets if b.get("_id") not in (None, "")
+                ],
+            }
+
         return json.dumps(result, default=str)
 
-    if not group_by or group_by == "department":
-        result = await _global_department_stats(
-            base_match, year_from, year_to, topic, topic_ids, faculty_repo, research_repo
-        )
-        return json.dumps(result, default=str)
-
-    if topic_ids is not None:
-        result = await _aggregate_by_dimension_for_ids(
-            topic_ids, base_match, group_by, year_from, year_to, research_repo
-        )
-    else:
-        dimension = {"year": "$publication_year", "document_type": "$document_type"}.get(
-            group_by, "$publication_year"
-        )
-        sort_field = "_id" if group_by == "year" else "count"
-        total, buckets = await research_repo.global_stats(base_match, dimension, sort_field, limit=25)
-        label_key = {"year": "year", "document_type": "type"}.get(group_by, "year")
-        result = {
-            "total_papers": total,
-            "year_from": year_from,
-            "year_to": year_to,
-            "grouped_by": group_by,
-            "groups": [
-                {label_key: b["_id"], "papers": b["count"]}
-                for b in buckets if b.get("_id") not in (None, "")
-            ],
-        }
-
-    return json.dumps(result, default=str)
+    return annotate_tool(
+        get_publication_stats,
+        thinking_label="Computing publication statistics",
+        token_cap=deps.config.TOKEN_CAP_PUBLICATION_STATS,
+    )
 
 
 async def _aggregate_by_dimension_for_ids(
