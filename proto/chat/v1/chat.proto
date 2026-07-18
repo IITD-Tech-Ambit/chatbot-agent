@@ -1,6 +1,5 @@
 syntax = "proto3";
 
-// sync-test: verifying pipeline
 package chat.v1;
 
 // Internal helpers for the chatbot-agent. The public answer stream stays SSE
