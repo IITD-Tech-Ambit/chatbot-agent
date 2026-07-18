@@ -47,8 +47,14 @@ USER appuser
 
 EXPOSE 3003
 
+# -u clears any HTTP_PROXY/HTTPS_PROXY that may be present container-wide
+# (e.g. for outbound xAI/Groq calls, see LLM_HTTP_PROXY_URL in groq_client.py)
+# before this call: Python's urllib.request auto-honors those vars by
+# default, and a proxy can't/won't forward a request to a loopback address —
+# same class of false-negative health check bug fixed in auth-service.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:3003/health')"
+    CMD env -u HTTP_PROXY -u HTTPS_PROXY -u http_proxy -u https_proxy \
+        python -c "import urllib.request; urllib.request.urlopen('http://localhost:3003/health')"
 
 # gunicorn + UvicornWorker gives graceful shutdown, worker recycling, and
 # process-level isolation while keeping the async event loop intact.
