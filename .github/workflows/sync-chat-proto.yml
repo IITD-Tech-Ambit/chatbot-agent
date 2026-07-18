@@ -1,0 +1,47 @@
+name: Sync chat.proto to proto-registry
+
+# This service owns chat.v1 — proto/chat/v1/chat.proto here is the source of
+# truth. On every push to main that touches it, mirror the file into
+# IITD-Tech-Ambit/proto-registry so consumers of chat.v1 always see the
+# current version. Deliberately low-ceremony: no linting, no versioning,
+# just copy + commit-if-changed + push.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "proto/chat/v1/chat.proto"
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout chatbot-agent
+        uses: actions/checkout@v4
+        with:
+          path: chatbot-agent
+
+      - name: Checkout proto-registry
+        uses: actions/checkout@v4
+        with:
+          repository: IITD-Tech-Ambit/proto-registry
+          token: ${{ secrets.PROTO_REGISTRY_TOKEN }}
+          path: proto-registry
+
+      - name: Copy chat.proto into proto-registry
+        run: |
+          mkdir -p proto-registry/proto/chat/v1
+          cp chatbot-agent/proto/chat/v1/chat.proto proto-registry/proto/chat/v1/chat.proto
+
+      - name: Commit and push if changed
+        working-directory: proto-registry
+        run: |
+          git config user.name "chatbot-agent-bot"
+          git config user.email "actions@github.com"
+          if git diff --quiet -- proto/chat/v1/chat.proto; then
+            echo "No changes to chat.proto — skipping."
+            exit 0
+          fi
+          git add proto/chat/v1/chat.proto
+          git commit -m "Sync chat.v1 from chatbot-agent@${GITHUB_SHA}"
+          git push

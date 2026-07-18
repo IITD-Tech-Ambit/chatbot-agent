@@ -10,7 +10,7 @@ import logging
 
 import grpc
 
-from iitd_ambit_protos.chat.v1 import chat_pb2, chat_pb2_grpc
+from chat.v1 import chat_pb2, chat_pb2_grpc
 from agent.services.quota import QuotaStore
 
 logger = logging.getLogger(__name__)

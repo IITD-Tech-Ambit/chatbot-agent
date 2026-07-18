@@ -3,10 +3,9 @@ FROM python:3.13-slim AS builder
 
 WORKDIR /build
 
-# System deps needed only to compile wheels (e.g. hiredis), plus git (pip
-# installs iitd-tech-ambit-proto-stubs via git+https from proto-registry)
+# System deps needed only to compile wheels (e.g. hiredis)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential git \
+        build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 # Install project + runtime extras into an isolated prefix so we can copy it cleanly
