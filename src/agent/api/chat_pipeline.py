@@ -13,7 +13,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.tools import BaseTool
 
 from agent.api.schemas import ChatRequest
-from agent.api.source_mapper import papers_to_sources
+from agent.api.source_mapper import ips_to_sources, papers_to_sources
 from agent.api.sse_events import (
     ChartEvent,
     DoneEvent,
@@ -199,6 +199,20 @@ async def _agent_stream(
 
                     if name == "search_papers":
                         deduped = papers_to_sources(data.get("papers", []))
+                        if deduped and not sources_emitted:
+                            yield _sse("sources", deduped)
+                            collected_sources = deduped
+                            sources_emitted = True
+
+                    elif name in ("search_ips", "find_ips_by_faculty"):
+                        deduped = ips_to_sources(data.get("ips", []))
+                        if deduped and not sources_emitted:
+                            yield _sse("sources", deduped)
+                            collected_sources = deduped
+                            sources_emitted = True
+
+                    elif name == "get_ip_details" and data.get("ip"):
+                        deduped = ips_to_sources([data["ip"]])
                         if deduped and not sources_emitted:
                             yield _sse("sources", deduped)
                             collected_sources = deduped

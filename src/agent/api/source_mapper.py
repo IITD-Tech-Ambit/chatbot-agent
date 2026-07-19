@@ -30,3 +30,27 @@ def papers_to_sources(papers: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "faculty_name": p.get("faculty_name"),
         })
     return deduped
+
+
+def ips_to_sources(ips: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Deduplicate by application number/title and shape IP filings for the sources event."""
+    seen: set[str] = set()
+    deduped: list[dict[str, Any]] = []
+    for ip in ips:
+        key = ip.get("application_number") or ip.get("title", "")
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        inventors = ip.get("inventors", [])
+        authors = [inv.get("name") if isinstance(inv, dict) else inv for inv in inventors]
+        deduped.append({
+            "index": ip.get("citation_index") if "citation_index" in ip else ip.get("index"),
+            "id": ip.get("id", ""),
+            "title": ip.get("title", ""),
+            "authors": [a for a in authors if a],
+            "application_number": ip.get("application_number"),
+            "document_type": ip.get("type_of_ip"),
+            "publication_year": ip.get("publication_year"),
+            "field_associated": ip.get("field_of_invention") or ip.get("department"),
+        })
+    return deduped

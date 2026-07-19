@@ -112,9 +112,55 @@ def _build_publication_stats_chart(data: dict[str, Any]) -> ChartPayload | None:
         series=[{"label": "Papers", "data": [g["papers"] for g in top_sorted]}],
     )
 
+def _build_ip_stats_chart(data: dict[str, Any]) -> BarChartData | None:
+    dimensions = data.get("dimensions") or []
+    groups = data.get("groups") or []
+    if not groups or len(dimensions) != 1:
+        return None
+    dim = dimensions[0]
+
+    if dim == "year":
+        points = sorted(
+            [g for g in groups if g.get("year") is not None],
+            key=lambda g: g["year"],
+        )
+        if not points:
+            return None
+        return BarChartData(
+            title="Patents & IP by Year",
+            x_label="Year",
+            y_label="Filings",
+            categories=[str(g["year"]) for g in points],
+            series=[{"label": "Filings", "data": [g["count"] for g in points]}],
+        )
+
+    if dim not in ("department", "type", "country", "classification", "inventor"):
+        return None
+    top = [g for g in groups if g.get(dim)][:15]
+    if not top:
+        return None
+    top_sorted = sorted(top, key=lambda g: g["count"])
+    titles = {
+        "department": "Patents & IP by Department",
+        "type": "Filings by IP Type",
+        "country": "Patents & IP by Country",
+        "classification": "Patents & IP by IPC Classification",
+        "inventor": "Patents & IP by Inventor",
+    }
+    return BarChartData(
+        title=titles[dim],
+        x_label="Filings",
+        y_label="",
+        layout="horizontal",
+        categories=[str(g.get(dim)) for g in top_sorted],
+        series=[{"label": "Filings", "data": [g["count"] for g in top_sorted]}],
+    )
+
+
 _CHART_BUILDERS: dict[str, Callable[[dict[str, Any]], ChartPayload | None]] = {
     "get_research_trends": _build_research_trends_chart,
     "compare_faculty": _build_compare_faculty_chart,
     "get_department_profile": _build_department_profile_chart,
     "get_publication_stats": _build_publication_stats_chart,
+    "get_ip_stats": _build_ip_stats_chart,
 }
