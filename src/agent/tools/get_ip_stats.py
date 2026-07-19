@@ -56,7 +56,25 @@ def build_tool(deps: ToolDeps) -> BaseTool:
     ) -> str:
         """Patent/IP statistics for IIT Delhi. group_by supports combinations like
         "department", "year", "type", "country", "classification", "department x year",
-        "type x year", or "inventor x year" (e.g. "which department filed how many patents in 2023")."""
+        "type x year", or "inventor x year" (e.g. "which department filed how many patents in 2023").
+
+        Filters (department, year_from/year_to, type_of_ip, country, inventor,
+        classification_prefix) are independent of group_by and can ALWAYS be
+        combined with it in the SAME call — group_by does not need to repeat a
+        dimension that is already narrowed by a filter. For "which technology
+        area / IPC classification does department X file the most in" or
+        "most-filed patents in department X", call ONCE with EXACTLY
+        department="X", group_by="classification" (group_by is the literal
+        string "classification" — do NOT put the word "classification" into
+        classification_prefix, that argument is for filtering to an already-known
+        IPC code prefix like "A61K" or "H01M" from lookup_ipc_classification, and
+        would find zero results if given a non-code string). This ranks that
+        department's IPC classifications by filing count, grouped at IPC
+        subclass level (e.g. "B01J") with a human-readable label attached. Do
+        not conclude a classification breakdown is unavailable just because a
+        prior call only used group_by="year" — a second call with
+        group_by="classification" (same filters, classification_prefix left
+        unset) gets it directly."""
         if ip_repo is None:
             return json.dumps({"groups": [], "error": "IP statistics are not available"})
 
@@ -75,7 +93,17 @@ def build_tool(deps: ToolDeps) -> BaseTool:
         if country:
             match["country"] = {"$regex": f"^{re.escape(country.strip())}$", "$options": "i"}
         if classification_prefix:
-            match["classification"] = {"$regex": f"^{re.escape(classification_prefix.strip())}", "$options": "i"}
+            cp = classification_prefix.strip()
+            # Models occasionally put a dimension name ("classification", "ipc", ...)
+            # here instead of using group_by, presumably matching on the param
+            # name — treat that as the group_by they meant rather than a
+            # filter that would (correctly, but uselessly) match zero IP codes.
+            misplaced_dim = _DIMENSION_ALIASES.get(cp.lower())
+            if misplaced_dim:
+                if misplaced_dim not in dimensions:
+                    dimensions.append(misplaced_dim)
+            else:
+                match["classification"] = {"$regex": f"^{re.escape(cp)}", "$options": "i"}
         if inventor:
             match["$or"] = [
                 {"inventors.kerberos": inventor.lower().strip()},

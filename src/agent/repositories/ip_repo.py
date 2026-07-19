@@ -128,12 +128,21 @@ class IpRepository:
     async def grouped_counts(
         self, match: dict, dimensions: list[str], limit: int = 300
     ) -> list[dict[str, Any]]:
-        """Count IP filings grouped by one or more dimensions.
+        """Count IP filings grouped by one or more dimensions, with `match`
+        applied first — so any combination of filters (department, year range,
+        type_of_ip, country, inventor, classification_prefix, ...) can be
+        combined with any grouping dimension in a single aggregation, e.g.
+        `{"department": dept_id}` matched + grouped by `classification` answers
+        "which technology area does department X file most in".
 
         Supported dimension keys: year, type, country, department,
         field_of_invention, classification, inventor. Array dimensions
-        (classification, inventor) trigger an $unwind. Department ObjectIds are
-        resolved to names in the returned rows.
+        (classification, inventor) trigger an $unwind. `classification` groups
+        at IPC subclass level (4-char prefix, e.g. "B01J") rather than the full
+        padded symbol — raw symbols are granular enough that filings rarely
+        share one, which would otherwise flatten every count to 1-2 and hide
+        the dominant technology area. Department ObjectIds are resolved to
+        names in the returned rows.
         """
         want_classification = "classification" in dimensions
         want_inventor = "inventor" in dimensions or "faculty" in dimensions
@@ -151,7 +160,11 @@ class IpRepository:
                 group_id["kerberos"] = "$inventors.kerberos"
                 group_id["is_faculty"] = "$inventors.is_faculty"
             elif dim == "classification":
-                group_id["classification"] = "$classification"
+                # IPC codes are ASCII-only, so $substr (widely supported, incl.
+                # by mongomock in tests) is equivalent to $substrCP here.
+                group_id["classification"] = {
+                    "$toUpper": {"$substr": [{"$ifNull": ["$classification", ""]}, 0, 4]}
+                }
             else:
                 field = _SCALAR_DIMENSIONS.get(dim)
                 if not field:
