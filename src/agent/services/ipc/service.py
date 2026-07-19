@@ -12,6 +12,7 @@ import re
 from typing import Any
 
 from agent.services.ipc.protocols import IpcCache, IpcStaticTable, WipoIpcClient
+from agent.services.ipc.wipo_client import unpad_ipc_symbol
 
 
 def _normalize(code: str) -> str:
@@ -54,6 +55,19 @@ class IpcClassificationService:
 
     def suggest_prefixes(self, topic: str, limit: int = 8) -> list[dict[str, Any]]:
         return self._static.suggest(topic, limit=limit)
+
+    def format_label(self, code: str) -> str:
+        """Human-readable display label for a raw (possibly 14-char padded) IPC
+        code: standard notation, plus a short title when the static table has
+        one. Offline and synchronous, so it's safe to call for every row of a
+        chart/table without triggering cache or WIPO lookups.
+        """
+        notation = unpad_ipc_symbol(code)
+        static = self._static.describe(code)
+        meaning = static["meaning"] if static else None
+        if not meaning:
+            return notation
+        return f"{notation} – {meaning.split(';')[0].strip()}"
 
     @staticmethod
     def _result(

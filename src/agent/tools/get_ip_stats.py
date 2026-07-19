@@ -40,6 +40,7 @@ def _parse_dimensions(group_by: str | None) -> list[str]:
 def build_tool(deps: ToolDeps) -> BaseTool:
     ip_repo = deps.ip_repo
     faculty_repo = deps.faculty_repo
+    ipc_service = deps.ipc_service
     cap = deps.config.TOKEN_CAP_IP_STATS
 
     @tool
@@ -93,6 +94,13 @@ def build_tool(deps: ToolDeps) -> BaseTool:
             )
         except Exception as exc:
             return json.dumps({"groups": [], "error": f"Aggregation failed: {type(exc).__name__}"})
+
+        if "classification" in dimensions and ipc_service is not None:
+            for g in groups:
+                code = g.get("classification")
+                if code:
+                    g["classification_code"] = code
+                    g["classification"] = ipc_service.format_label(code)
 
         result = {
             "grouped_by": " x ".join(dimensions),

@@ -34,6 +34,25 @@ def pad_ipc_symbol(code: str) -> str:
     return (subclass.ljust(4, "0") + main_group.zfill(4) + sub.ljust(6, "0"))[:14]
 
 
+def unpad_ipc_symbol(code: str) -> str:
+    """Inverse of pad_ipc_symbol: WIPO's 14-char symbol form back to standard
+    notation, e.g. H02J0003380000 → H02J 3/38. Non-symbol input passes through.
+    """
+    cleaned = re.sub(r"\s+", "", (code or "").upper())
+    if len(cleaned) != 14 or not cleaned[0].isalpha():
+        return code or ""
+
+    subclass, main_field, sub_field = cleaned[:4], cleaned[4:8], cleaned[8:14]
+    if main_field == "0000" and sub_field == "000000":
+        return subclass
+
+    main_group = main_field.lstrip("0") or "0"
+    sub = sub_field
+    while len(sub) > 2 and sub.endswith("00"):
+        sub = sub[:-2]
+    return f"{subclass} {main_group}/{sub}"
+
+
 class WipoIpcHttpClient:
     def __init__(self, http_client: httpx.AsyncClient, base_url: str, timeout_ms: int) -> None:
         self._http = http_client
