@@ -29,7 +29,15 @@ def is_quota_exempt(kerberos: str, category: str) -> bool:
     every other category (faculty, staff, anything unlisted) is unlimited.
     Whitelisted kerberos IDs are always unlimited regardless of category.
     An empty/unrecognized category (e.g. missing header) is NOT exempt —
-    fail toward applying the limit, not toward unlimited chats."""
+    fail toward applying the limit, not toward unlimited chats.
+
+    When ENABLE_AUTH=false (dev/testing, OAuth bypassed upstream), everyone
+    is exempt: the gateway injects the same mock identity on every request
+    in that mode, so quota is meaningless and would otherwise rate-limit
+    the whole testing session under one counter."""
+    if not settings.ENABLE_AUTH:
+        return True
+
     whitelist = {
         k.strip().lower()
         for k in settings.CHAT_QUOTA_WHITELIST_KERBEROS.split(",")

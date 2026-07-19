@@ -20,6 +20,13 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     LOG_LEVEL: str = "info"
 
+    # Secure-by-default: MUST stay true (or unset) in production. Mirrors the
+    # ENABLE_AUTH toggle in api-gateway/auth-service — when the gateway bypasses
+    # OAuth it injects the same trusted mock identity (devuser) on every request,
+    # so that single identity would otherwise burn through the daily quota during
+    # a testing session. Set false only for local/dev testing.
+    ENABLE_AUTH: bool = True
+
     # CORS — comma-separated origins or JSON array; "*" allows all (dev default)
     ALLOWED_ORIGINS: list[str] = ["*"]
 
