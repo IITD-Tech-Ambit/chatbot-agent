@@ -44,13 +44,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.redis = redis_client
 
     from agent.repositories.faculty_repo import FacultyRepository
+    from agent.repositories.ip_repo import IpRepository
     from agent.repositories.research_repo import ResearchRepository
 
     faculty_repo = FacultyRepository(db)
     research_repo = ResearchRepository(db)
+    ip_repo = IpRepository(db)
 
     app.state.faculty_repo = faculty_repo
     app.state.research_repo = research_repo
+    app.state.ip_repo = ip_repo
 
     # Mesh transports (composition root: gRPC via Envoy or HTTP for dev)
     from agent.rag.embeddings import EmbeddingClient
@@ -104,6 +107,36 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         query_parser=query_parser,
     )
 
+    from agent.rag.ip_retriever import IpRetriever
+
+    ip_retriever = IpRetriever(
+        opensearch=os_client,
+        index_name=settings.OPENSEARCH_IP_INDEX,
+        ip_repo=ip_repo,
+        embedding_client=embedding_client,
+        top_k=settings.CHAT_TOP_K,
+    )
+
+    import httpx
+
+    from agent.services.ipc.cache import RedisIpcCache
+    from agent.services.ipc.service import IpcClassificationService
+    from agent.services.ipc.static_table import StaticIpcTable
+    from agent.services.ipc.wipo_client import WipoIpcHttpClient
+
+    # WIPO is external internet; route through the same campus proxy the LLM uses.
+    wipo_http = httpx.AsyncClient(proxy=settings.LLM_HTTP_PROXY_URL or None)
+    ipc_service = IpcClassificationService(
+        static_table=StaticIpcTable(),
+        cache=RedisIpcCache(redis_client, ttl=settings.IPC_CACHE_TTL),
+        wipo_client=WipoIpcHttpClient(
+            wipo_http,
+            base_url=settings.IPC_WIPO_API_URL,
+            timeout_ms=settings.IPC_LOOKUP_TIMEOUT_MS,
+        ),
+    )
+    app.state.ipc_service = ipc_service
+
     from agent.tools.deps import ToolDeps
     from agent.tools._registry import build_tools
 
@@ -113,6 +146,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         research_repo=research_repo,
         config=settings,
         search_client=search_client,
+        ip_repo=ip_repo,
+        ip_retriever=ip_retriever,
+        ipc_service=ipc_service,
     )
     tools = build_tools(tool_deps)
     app.state.tools = tools
@@ -165,6 +201,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     close_search = getattr(search_client, "close", None)
     if close_search:
         await close_search()
+    await wipo_http.aclose()
     await opensearch.close()
     await redis_mod.close()
     await mongo.close()

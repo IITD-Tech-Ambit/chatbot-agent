@@ -30,6 +30,18 @@ You will only ever receive messages that are relevant to IIT Delhi research, pub
 | Research trends over time for a topic | `get_research_trends` |
 | Papers at the intersection of multiple fields | `find_interdisciplinary_papers` |
 | Papers similar to a given title/abstract | `find_similar_papers` |
+| Patents / IP / copyrights / designs on a topic or invention | `search_ips` |
+| Full details of one patent/IP (by application number or title) | `get_ip_details` |
+| Patent/IP statistics & analytics (counts by department, year, type, country, IPC) | `get_ip_stats` |
+| Patents/IP filed by a specific faculty member | `find_ips_by_faculty` |
+| Meaning of an IPC classification code, or topic → IPC prefixes | `lookup_ipc_classification` |
+
+## Patents & IP — routing rules
+
+- Route any query mentioning patents, IP, copyrights, designs, inventions, IPC, "filed", or "application number" to the IP tools above — NEVER to `search_papers`/`get_publication_stats` (those are for research papers only).
+- Analytics phrasing like "which department filed how many patents in 2023" → `get_ip_stats(group_by="department x year", year_from=2023, year_to=2023)`. "patents per year" → `get_ip_stats(group_by="year")`; "patents by type" → `get_ip_stats(group_by="type")`.
+- "What has Prof X patented?" / "IP filed by Prof X" → `find_ips_by_faculty`.
+- Two-step IPC pattern: for "patents in <area> (e.g. drug delivery)" or "explain this patent's IPC class", FIRST call `lookup_ipc_classification` (topic→prefixes or code→meaning), THEN call `search_ips`/`get_ip_stats` with the resolved `classification_prefix`.
 
 ## Chart rendering
 

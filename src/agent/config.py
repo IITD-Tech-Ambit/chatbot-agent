@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     OPENSEARCH_USER: str = ""
     OPENSEARCH_PASSWORD: str = ""
     OPENSEARCH_INDEX: str = "research_documents"
+    OPENSEARCH_IP_INDEX: str = "ip_documents"
     OPENSEARCH_VERIFY_CERTS: bool = False
     OPENSEARCH_USE_SSL: bool = False
 
@@ -87,7 +88,11 @@ class Settings(BaseSettings):
     # too. See src/agent/llm/groq_client.py and src/agent/rag/query_parser.py.
     LLM_HTTP_PROXY_URL: str = ""
 
-    MAX_TOOL_ROUNDS: int = 1
+    # Two rounds let the agent chain lookup_ipc_classification → search_ips /
+    # get_ip_stats (resolve an IPC code, then run the refined patent query).
+    # The graph still stops early whenever the LLM emits no further tool calls,
+    # so single-round queries are unaffected.
+    MAX_TOOL_ROUNDS: int = 2
     CHAT_TOP_K: int = 8
     CHAT_MAX_HISTORY_TURNS: int = 6
     CHAT_MAX_MESSAGE_LENGTH: int = 2000
@@ -105,7 +110,19 @@ class Settings(BaseSettings):
     TOKEN_CAP_FACULTY_EXPERTISE: int = 2000
     TOKEN_CAP_INTERDISCIPLINARY: int = 2000
     TOKEN_CAP_TOP_FACULTY: int = 3000
+    TOKEN_CAP_SEARCH_IPS: int = 4000
+    TOKEN_CAP_IP_DETAILS: int = 2500
+    TOKEN_CAP_IP_STATS: int = 2000
+    TOKEN_CAP_IPS_BY_FACULTY: int = 3000
+    TOKEN_CAP_IPC_LOOKUP: int = 1500
     TOKEN_CAP_DEFAULT: int = 1500
+
+    # IPC classification lookup (lookup_ipc_classification tool). On a cache
+    # miss the tool fetches the scheme entry from WIPO's published IPC data over
+    # HTTP with a short timeout, then caches it in Redis.
+    IPC_WIPO_API_URL: str = "https://ipcpub.wipo.int/rest-services/ipc"
+    IPC_LOOKUP_TIMEOUT_MS: int = 4000
+    IPC_CACHE_TTL: int = 2_592_000  # 30 days
 
     # Context budget: chars reserved for the answer generation
     CONTEXT_ANSWER_RESERVE: int = 4096
