@@ -122,6 +122,13 @@ class Settings(BaseSettings):
     TOKEN_CAP_IP_STATS: int = 2000
     TOKEN_CAP_IPS_BY_FACULTY: int = 3000
     TOKEN_CAP_IPC_LOOKUP: int = 1500
+    # Classification / taxonomy tools (thematic areas + domains)
+    TOKEN_CAP_THEMATIC_AREAS: int = 2000
+    TOKEN_CAP_RESEARCH_DOMAINS: int = 3000
+    TOKEN_CAP_CLASSIFICATION_PAPERS: int = 4000
+    TOKEN_CAP_CLASSIFICATION_FACULTY: int = 3000
+    TOKEN_CAP_THEME_BREAKDOWN: int = 2500
+    TOKEN_CAP_THEME_DISTRIBUTION: int = 2500
     TOKEN_CAP_DEFAULT: int = 1500
 
     # IPC classification lookup (lookup_ipc_classification tool). On a cache

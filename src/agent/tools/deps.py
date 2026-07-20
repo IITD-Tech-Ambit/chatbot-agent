@@ -9,6 +9,7 @@ from agent.repositories.protocols import (
     IFacultyRepository,
     IIpRepository,
     IResearchRepository,
+    ITaxonomyRepository,
 )
 
 if TYPE_CHECKING:
@@ -29,3 +30,4 @@ class ToolDeps:
     ip_repo: IIpRepository | None = None
     ip_retriever: IpRetriever | None = None
     ipc_service: IpcClassificationService | None = None
+    taxonomy_repo: ITaxonomyRepository | None = None

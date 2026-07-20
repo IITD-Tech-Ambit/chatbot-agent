@@ -75,7 +75,7 @@ def _enforce_context_budget(messages: list, caps: dict[str, int]) -> list:
                     data = json.loads(content)
                     truncated = False
                     if isinstance(data, dict):
-                        for list_key in ("papers", "ips", "faculty", "similar_papers", "groups", "comparison", "trend", "results", "departments"):
+                        for list_key in ("papers", "ips", "faculty", "similar_papers", "groups", "comparison", "trend", "results", "departments", "themes", "domains", "distribution"):
                             items = data.get(list_key)
                             if isinstance(items, list):
                                 while items and len(json.dumps(data, default=str)) > tool_cap:
