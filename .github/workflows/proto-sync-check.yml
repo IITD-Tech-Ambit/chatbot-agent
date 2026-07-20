@@ -33,7 +33,9 @@ jobs:
       - name: Regenerate and diff every declared proto dependency
         working-directory: consumer
         run: |
-          pip install --quiet grpcio-tools
+          # Must match pull-proto.yml's pinned version exactly — see the
+          # comment there for why an unpinned version breaks this check.
+          pip install --quiet grpcio-tools==1.82.1
           FAILED=0
           for pkg in $(python3 -c "import json; print(' '.join(json.load(open('.proto-deps.json')).keys()))"); do
             PKG_NAME=$(echo "$pkg" | cut -d. -f1)

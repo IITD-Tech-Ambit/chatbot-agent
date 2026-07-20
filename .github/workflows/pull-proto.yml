@@ -46,7 +46,11 @@ jobs:
         env:
           PACKAGE: ${{ github.event.client_payload.package }}
         run: |
-          pip install --quiet grpcio-tools
+          # Pinned exactly: an unpinned/newer grpcio-tools changes output
+          # formatting (e.g. adds a GRPC_GENERATED_VERSION guard block, drops
+          # `(object)` base classes) independent of any real .proto content
+          # change, which would make every diff here noise instead of signal.
+          pip install --quiet grpcio-tools==1.82.1
 
           PKG_NAME=$(echo "$PACKAGE" | cut -d. -f1)
           PKG_VER=$(echo "$PACKAGE" | cut -d. -f2)
