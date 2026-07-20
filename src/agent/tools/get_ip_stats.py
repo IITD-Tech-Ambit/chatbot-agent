@@ -61,20 +61,25 @@ def build_tool(deps: ToolDeps) -> BaseTool:
         Filters (department, year_from/year_to, type_of_ip, country, inventor,
         classification_prefix) are independent of group_by and can ALWAYS be
         combined with it in the SAME call — group_by does not need to repeat a
-        dimension that is already narrowed by a filter. For "which technology
-        area / IPC classification does department X file the most in" or
-        "most-filed patents in department X", call ONCE with EXACTLY
-        department="X", group_by="classification" (group_by is the literal
-        string "classification" — do NOT put the word "classification" into
-        classification_prefix, that argument is for filtering to an already-known
-        IPC code prefix like "A61K" or "H01M" from lookup_ipc_classification, and
-        would find zero results if given a non-code string). This ranks that
-        department's IPC classifications by filing count, grouped at IPC
-        subclass level (e.g. "B01J") with a human-readable label attached. Do
-        not conclude a classification breakdown is unavailable just because a
-        prior call only used group_by="year" — a second call with
-        group_by="classification" (same filters, classification_prefix left
-        unset) gets it directly."""
+        dimension that is already narrowed by a filter. Any question that names
+        ONE specific department and asks what that department files "most" or
+        "most commonly" — regardless of exact wording, e.g. "which technology
+        area / IPC classification does department X file the most in",
+        "most-filed patents in department X", "most filed patent
+        classifications by department X", "top classification for department
+        X" — is asking to rank classification, not year: call ONCE, on the
+        FIRST attempt, with EXACTLY department="X", group_by="classification"
+        (group_by is the literal string "classification" — do NOT put the word
+        "classification" into classification_prefix, that argument is for
+        filtering to an already-known IPC code prefix like "A61K" or "H01M"
+        from lookup_ipc_classification, and would find zero results if given a
+        non-code string). There is no follow-up round to correct a wrong
+        group_by, so do not call this with group_by="year" (or group_by
+        omitted, which defaults to "year") for this question type and plan to
+        refine afterward — get group_by="classification" right immediately.
+        This ranks that department's IPC classifications by filing count,
+        grouped at IPC subclass level (e.g. "B01J") with a human-readable label
+        attached."""
         if ip_repo is None:
             return json.dumps({"groups": [], "error": "IP statistics are not available"})
 
