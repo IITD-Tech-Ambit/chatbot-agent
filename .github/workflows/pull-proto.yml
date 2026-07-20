@@ -1,0 +1,106 @@
+name: Pull proto update from registry
+
+# Unlike api-gateway (plain file copy), this repo doesn't keep the .proto
+# source for search.v1/embedding.v1 at all — it only checks in generated
+# grpc stubs (src/<pkg>/v1/<pkg>_pb2.py, _pb2_grpc.py). So "pulling" means
+# regenerating those stubs from the current registry .proto via protoc, not
+# copying a file. See .proto-deps.json for which packages we consume.
+on:
+  repository_dispatch:
+    types: [proto-updated]
+
+jobs:
+  pull:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+        with:
+          path: consumer
+
+      - name: Checkout proto-registry
+        uses: actions/checkout@v4
+        with:
+          repository: IITD-Tech-Ambit/proto-registry
+          path: proto-registry
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check if we depend on this package
+        id: check
+        working-directory: consumer
+        env:
+          PACKAGE: ${{ github.event.client_payload.package }}
+        run: |
+          DEP=$(python3 -c "import json,os; d=json.load(open('.proto-deps.json')); print('yes' if os.environ['PACKAGE'] in d else 'no')")
+          echo "depends=$DEP" >> "$GITHUB_OUTPUT"
+          if [ "$DEP" = "no" ]; then
+            echo "This repo doesn't depend on $PACKAGE — nothing to do."
+          fi
+
+      - name: Regenerate grpc stubs and diff
+        id: gen
+        if: steps.check.outputs.depends == 'yes'
+        env:
+          PACKAGE: ${{ github.event.client_payload.package }}
+        run: |
+          pip install --quiet grpcio-tools
+
+          PKG_NAME=$(echo "$PACKAGE" | cut -d. -f1)
+          PKG_VER=$(echo "$PACKAGE" | cut -d. -f2)
+          OUT_DIR=$(python3 -c "import json; print(json.load(open('consumer/.proto-deps.json'))['$PACKAGE']['out_dir'])")
+
+          # Lay proto out under a package-shaped root (search/v1/search.proto)
+          # so grpc_tools mirrors it into matching python package imports
+          # (from search.v1 import search_pb2 as ...), matching the existing
+          # checked-in stubs' style exactly.
+          mkdir -p "protoroot/${PKG_NAME}/${PKG_VER}"
+          cp "proto-registry/proto/${PKG_NAME}/${PKG_VER}/${PKG_NAME}.proto" \
+             "protoroot/${PKG_NAME}/${PKG_VER}/${PKG_NAME}.proto"
+
+          mkdir -p genout
+          python -m grpc_tools.protoc \
+            -I protoroot \
+            --python_out=genout \
+            --grpc_python_out=genout \
+            "protoroot/${PKG_NAME}/${PKG_VER}/${PKG_NAME}.proto"
+
+          GEN_PB2="genout/${PKG_NAME}/${PKG_VER}/${PKG_NAME}_pb2.py"
+          GEN_GRPC="genout/${PKG_NAME}/${PKG_VER}/${PKG_NAME}_pb2_grpc.py"
+          DST_PB2="consumer/${OUT_DIR}/${PKG_NAME}/${PKG_VER}/${PKG_NAME}_pb2.py"
+          DST_GRPC="consumer/${OUT_DIR}/${PKG_NAME}/${PKG_VER}/${PKG_NAME}_pb2_grpc.py"
+
+          if diff -q "$GEN_PB2" "$DST_PB2" > /dev/null 2>&1 && diff -q "$GEN_GRPC" "$DST_GRPC" > /dev/null 2>&1; then
+            echo "$PACKAGE stubs already in sync — nothing to do."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          cp "$GEN_PB2" "$DST_PB2"
+          cp "$GEN_GRPC" "$DST_GRPC"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "package=$PACKAGE" >> "$GITHUB_OUTPUT"
+          echo "pb2_path=${OUT_DIR}/${PKG_NAME}/${PKG_VER}/${PKG_NAME}_pb2.py" >> "$GITHUB_OUTPUT"
+          echo "grpc_path=${OUT_DIR}/${PKG_NAME}/${PKG_VER}/${PKG_NAME}_pb2_grpc.py" >> "$GITHUB_OUTPUT"
+
+      - name: Open PR with the regenerated stubs
+        if: steps.gen.outputs.changed == 'true'
+        working-directory: consumer
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PACKAGE: ${{ steps.gen.outputs.package }}
+          PB2_PATH: ${{ steps.gen.outputs.pb2_path }}
+          GRPC_PATH: ${{ steps.gen.outputs.grpc_path }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          BRANCH="sync-proto/${PACKAGE}-$(date +%Y%m%d%H%M%S)"
+          git switch -c "$BRANCH"
+          git add "$PB2_PATH" "$GRPC_PATH"
+          git commit -m "chore(proto): regenerate ${PACKAGE} grpc stubs from proto-registry"
+          git push origin "$BRANCH"
+          gh pr create --base main --head "$BRANCH" \
+            --title "chore(proto): regenerate ${PACKAGE} grpc stubs from proto-registry" \
+            --body "Automated regeneration of ${PACKAGE} stubs following an update in proto-registry. This does NOT auto-merge — a regenerated stub can change the Python API shape (new/renamed message fields, RPC methods), so it needs a human look even though CI has to pass too." \
