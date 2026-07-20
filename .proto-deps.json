@@ -1,0 +1,4 @@
+{
+  "search.v1": { "out_dir": "src" },
+  "embedding.v1": { "out_dir": "src" }
+}

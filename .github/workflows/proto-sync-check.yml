@@ -1,0 +1,71 @@
+name: Proto sync check
+
+# Independent safety net: regenerates search.v1/embedding.v1 grpc stubs from
+# proto-registry's current main and diffs them against what's actually
+# checked in, regardless of whether pull-proto.yml's automation ran or its
+# PR got merged. Non-blocking on main (early warning); required on PRs into
+# prod, so stale/regenerated-but-unmerged stubs cannot reach prod.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [prod]
+
+jobs:
+  check:
+    name: Proto sync check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+        with:
+          path: consumer
+
+      - name: Checkout proto-registry
+        uses: actions/checkout@v4
+        with:
+          repository: IITD-Tech-Ambit/proto-registry
+          path: proto-registry
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Regenerate and diff every declared proto dependency
+        working-directory: consumer
+        run: |
+          # Must match pull-proto.yml's pinned version exactly — see the
+          # comment there for why an unpinned version breaks this check.
+          pip install --quiet grpcio-tools==1.82.1
+          FAILED=0
+          for pkg in $(python3 -c "import json; print(' '.join(json.load(open('.proto-deps.json')).keys()))"); do
+            PKG_NAME=$(echo "$pkg" | cut -d. -f1)
+            PKG_VER=$(echo "$pkg" | cut -d. -f2)
+            OUT_DIR=$(python3 -c "import json; print(json.load(open('.proto-deps.json'))['$pkg']['out_dir'])")
+
+            mkdir -p "../protoroot/${PKG_NAME}/${PKG_VER}"
+            cp "../proto-registry/proto/${PKG_NAME}/${PKG_VER}/${PKG_NAME}.proto" \
+               "../protoroot/${PKG_NAME}/${PKG_VER}/${PKG_NAME}.proto"
+
+            mkdir -p "../genout"
+            python -m grpc_tools.protoc \
+              -I "../protoroot" \
+              --python_out="../genout" \
+              --grpc_python_out="../genout" \
+              "../protoroot/${PKG_NAME}/${PKG_VER}/${PKG_NAME}.proto"
+
+            GEN_PB2="../genout/${PKG_NAME}/${PKG_VER}/${PKG_NAME}_pb2.py"
+            GEN_GRPC="../genout/${PKG_NAME}/${PKG_VER}/${PKG_NAME}_pb2_grpc.py"
+            DST_PB2="${OUT_DIR}/${PKG_NAME}/${PKG_VER}/${PKG_NAME}_pb2.py"
+            DST_GRPC="${OUT_DIR}/${PKG_NAME}/${PKG_VER}/${PKG_NAME}_pb2_grpc.py"
+
+            if diff -q "$GEN_PB2" "$DST_PB2" > /dev/null 2>&1 && diff -q "$GEN_GRPC" "$DST_GRPC" > /dev/null 2>&1; then
+              echo "${pkg}: in sync"
+            else
+              echo "::error::${pkg} stubs are out of sync with proto-registry"
+              diff "$GEN_PB2" "$DST_PB2" || true
+              diff "$GEN_GRPC" "$DST_GRPC" || true
+              FAILED=1
+            fi
+          done
+          exit $FAILED

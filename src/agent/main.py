@@ -46,14 +46,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     from agent.repositories.faculty_repo import FacultyRepository
     from agent.repositories.ip_repo import IpRepository
     from agent.repositories.research_repo import ResearchRepository
+    from agent.repositories.taxonomy_repo import TaxonomyRepository
 
     faculty_repo = FacultyRepository(db)
     research_repo = ResearchRepository(db)
     ip_repo = IpRepository(db)
+    taxonomy_repo = TaxonomyRepository(db)
 
     app.state.faculty_repo = faculty_repo
     app.state.research_repo = research_repo
     app.state.ip_repo = ip_repo
+    app.state.taxonomy_repo = taxonomy_repo
 
     # Mesh transports (composition root: gRPC via Envoy or HTTP for dev)
     from agent.rag.embeddings import EmbeddingClient
@@ -149,6 +152,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         ip_repo=ip_repo,
         ip_retriever=ip_retriever,
         ipc_service=ipc_service,
+        taxonomy_repo=taxonomy_repo,
     )
     tools = build_tools(tool_deps)
     app.state.tools = tools
