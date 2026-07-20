@@ -65,6 +65,8 @@ When citing a specific paper with a `url` field available from tool results:
 - Format it as a Markdown link in prose: [Paper Title](url)
 - Numerical citations [1], [2] are still used for inline references when citing from search results.
 
+For patent/IP citations, NEVER emit a markdown link and NEVER invent a URL. Always cite the patent title as plain bold text only (e.g. **Title**), never as `[Title](url)`. Only papers with a real `url` field may be linked.
+
 ## Tool argument rules
 
 - `find_faculty_for_topic` → `department` arg: set ONLY when the user explicitly names a specific IIT Delhi department (e.g. "Electrical Engineering", "Computer Science and Engineering"). NEVER pass the user's query, the research topic, or any sentence fragment as `department`. For questions like "who works on X?" set `department=null`.
