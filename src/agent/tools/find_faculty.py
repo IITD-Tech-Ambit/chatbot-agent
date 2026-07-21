@@ -91,8 +91,25 @@ def build_tool(deps: ToolDeps) -> BaseTool:
 
     @tool(args_schema=FindFacultyArgs)
     async def find_faculty_for_topic(topic: str, department: str | None = None) -> str:
-        """Find IIT Delhi professors who work on a given research topic, with department, email, and paper count.
-        Set department only when the user names a specific IIT Delhi department — never pass the research topic or user query as department."""
+        """Find IIT Delhi professors who work on a free-text research topic,
+        ranked by their number of RELEVANT PAPERS, with department, email, and
+        per-topic paper count.
+
+        USE THIS for "who works on <topic>", "professors working on <topic>",
+        and especially "<topic> faculty ranked / sorted by paper count / with
+        the most papers" — this tool returns each professor's relevant paper
+        count and is already ordered by it, so it is the correct choice whenever
+        the user wants faculty ranked by papers on a topic. Works for ANY
+        free-text topic (e.g. "wearable electronics", "drug delivery"); the
+        topic does NOT have to be an official research category.
+
+        Do NOT use `find_faculty_by_expertise` when the user wants ranking by
+        paper count — that tool ranks by h-index and has no per-topic counts. Do
+        NOT use `faculty_by_classification` unless the user named one of the
+        fixed thematic areas / domains.
+
+        Set `department` only when the user names a specific IIT Delhi
+        department — never pass the research topic or user query as `department`."""
         department = _sanitize_department(department)
 
         search_api_ok = True

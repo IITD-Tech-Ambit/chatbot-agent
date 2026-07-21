@@ -42,6 +42,31 @@ def _sse(event: str, data: Any) -> str:
     return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
 
 
+def _short(obj: Any, limit: int = 300) -> str:
+    """Compact one-line repr for logs (truncated)."""
+    try:
+        s = json.dumps(obj, default=str)
+    except Exception:
+        s = str(obj)
+    return s if len(s) <= limit else s[:limit] + "…"
+
+
+def _summarize_result(data: Any) -> str:
+    """One-line summary of a tool result — list-key lengths + short scalars,
+    never the full payload (abstracts etc.)."""
+    if isinstance(data, dict):
+        parts = []
+        for k, v in data.items():
+            if isinstance(v, list):
+                parts.append(f"{k}[{len(v)}]")
+            elif isinstance(v, (int, float, bool)) or v is None:
+                parts.append(f"{k}={v}")
+            elif isinstance(v, str):
+                parts.append(f"{k}={v[:40]}")
+        return ", ".join(parts)[:300] or _short(data)
+    return _short(data)
+
+
 def require_user_id(request: Request) -> str:
     """Trusted identity injected by the api-gateway (x-user-id). The gateway
     strips any client-supplied copy, so an empty header means the request
@@ -106,6 +131,7 @@ async def _structured_stream(
         else:
             text = result.get("text", "")
 
+        logger.info("CHAT answer (structured): %s", _short(text, 2000))
         yield _sse("token", TokenEvent(text=text).model_dump())
         took_ms = int((time.time() - start_time) * 1000)
         yield _sse("done", DoneEvent(took_ms=took_ms).model_dump())
@@ -123,6 +149,7 @@ async def _cached_stream(cached: dict, start_time: float) -> AsyncGenerator[str,
         yield _sse("sources", cached["sources"])
     if cached.get("chart"):
         yield _sse("chart", cached["chart"])
+    logger.info("CHAT answer (cached): %s", _short(cached.get("answer", ""), 2000))
     yield _sse("token", TokenEvent(text=cached["answer"]).model_dump())
     yield _sse("done", DoneEvent(
         took_ms=int((time.time() - start_time) * 1000), cached=True
@@ -168,6 +195,7 @@ async def _agent_stream(
     collected_sources: list[dict] = []
     collected_chart: dict | None = None
     first_token_recorded = False
+    tools_used: list[str] = []
 
     try:
         async for ev in graph.astream_events(initial_state, version="v2"):
@@ -177,6 +205,9 @@ async def _agent_stream(
 
             if kind == "on_tool_start":
                 _metrics.CHATBOT_TOOL_CALLS_TOTAL.labels(tool=name).inc()
+                tools_used.append(name)
+                tool_input = (ev.get("data") or {}).get("input")
+                logger.info("CHAT  → tool call: %s args=%s", name, _short(tool_input))
                 label = thinking_label_for(name, tools)
                 yield _sse("thinking", ThinkingEvent(
                     step=label, detail=None
@@ -190,6 +221,8 @@ async def _agent_stream(
                         if not isinstance(raw_output, str) else raw_output
                     )
                     data = json.loads(output_str) if isinstance(output_str, str) else output_str
+
+                    logger.info("CHAT  ← tool result: %s -> %s", name, _summarize_result(data))
 
                     chart_ev: ChartEvent | None = build_chart_for_tool(name, data)
                     if chart_ev:
@@ -237,6 +270,11 @@ async def _agent_stream(
         took_ms = int((time.time() - start_time) * 1000)
         _metrics.CHATBOT_CHAT_DURATION_SECONDS.observe(took_ms / 1000)
         _metrics.CHATBOT_LLM_REQUESTS_TOTAL.labels(outcome="success").inc()
+        logger.info("CHAT answer: %s", _short(collected_answer, 2000))
+        logger.info(
+            "CHAT done: tools=%s, answer=%d chars, %d ms",
+            tools_used or "none (answered directly)", len(collected_answer), took_ms,
+        )
         yield _sse("done", DoneEvent(took_ms=took_ms).model_dump())
 
         if collected_answer.strip():
@@ -261,6 +299,8 @@ async def handle_chat(request: Request, body: ChatRequest) -> StreamingResponse 
     message = sanitize_message(body.message, settings.CHAT_MAX_MESSAGE_LENGTH)
     if not message:
         raise HTTPException(status_code=400, detail="Empty message")
+
+    logger.info("CHAT [user=%s] message: %r (history=%d turns)", user_id, message, len(body.history))
 
     meta = classify_meta(message)
     if meta:
@@ -299,6 +339,7 @@ async def handle_chat(request: Request, body: ChatRequest) -> StreamingResponse 
     llm_cache = app.state.llm_cache
     structured_match = match_structured(message)
     if structured_match:
+        logger.info("CHAT  → structured fast-path (no LLM)")
         return StreamingResponse(
             _structured_stream(
                 message=message,
@@ -313,6 +354,7 @@ async def handle_chat(request: Request, body: ChatRequest) -> StreamingResponse 
 
     cached = await llm_cache.get(message)
     if cached:
+        logger.info("CHAT  → cache hit (no LLM, no tools)")
         return StreamingResponse(
             _cached_stream(cached, start_time),
             media_type="text/event-stream",

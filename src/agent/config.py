@@ -101,7 +101,7 @@ class Settings(BaseSettings):
     # so single-round queries are unaffected.
     MAX_TOOL_ROUNDS: int = 2
     CHAT_TOP_K: int = 8
-    CHAT_MAX_HISTORY_TURNS: int = 6
+    CHAT_MAX_HISTORY_TURNS: int = 5
     CHAT_MAX_MESSAGE_LENGTH: int = 2000
     HISTORY_TOKEN_BUDGET: int = 800
 

@@ -37,9 +37,11 @@ In production, nginx (see `opensearch/deploy/nginx/nginx.conf`) proxies the chat
 
 ## Features
 
-- **Forced-tool agent graph** — always retrieves before answering; injects `search_papers` if the LLM returns no tool calls
-- **12 auto-discovered tools** — papers, faculty, departments, stats, trends, comparisons, interdisciplinary search
-- **Hybrid RAG retrieval** — BM25 + kNN over OpenSearch, BGE reranking, MongoDB hydration, kerberos/department boosts
+- **LangGraph agent** — picks a tool, runs it, then answers grounded in the result (up to `MAX_TOOL_ROUNDS` tool rounds)
+- **23 auto-discovered tools** — papers, faculty, departments, stats, trends, comparisons, interdisciplinary search, **research-area classification** (thematic areas + domains), and patents/IP
+- **Dynamic query knobs** — the list/ranking tools take `sort_by` / `limit` / `year_from` / `year_to` so the bot honors custom requirements (e.g. "top 5 faculty by paper count in a theme") instead of a single fixed ordering
+- **Grounded answers** — answer LLM runs at temperature 0 with strict anti-hallucination rules (never invent counts, entities, or rankings; say "I don't have that" instead of guessing)
+- **Hybrid RAG retrieval** — BM25 + kNN over OpenSearch, BGE reranking, MongoDB hydration, kerberos/department boosts (used by the paper-search tools)
 - **Fast paths** — regex guardrails (greeting/identity/injection) and structured queries (h-index, citations, dept) bypass the LLM
 - **Redis caching** — LLM response cache + embedding cache
 - **SSE streaming** — `thinking`, `status`, `sources`, `chart`, `token`, `done` events for the frontend
@@ -183,6 +185,19 @@ Tools are auto-discovered from `src/agent/tools/*.py` at startup.
 | `get_research_trends` | MongoDB aggregation | "ML paper trends 2018–2023" |
 | `find_interdisciplinary_papers` | OpenSearch + MongoDB | "cross-department work on AI" |
 | `get_top_faculty` | MongoDB | "top cited faculty in EE" |
+| `list_thematic_areas` | MongoDB (taxonomy + facet rollups) | "what research themes does IIT Delhi have" |
+| `list_research_domains` | MongoDB (taxonomy + facet rollups) | "domains under the Energy theme" |
+| `papers_by_classification` | MongoDB (`classification.*`) | "most cited papers in the ML domain since 2022" |
+| `faculty_by_classification` | MongoDB (facet members / per-faculty counts) | "top 5 faculty by paper count in Manufacturing" |
+| `theme_distribution` | MongoDB aggregation | "IIT Delhi's research profile by theme" |
+| `faculty_theme_breakdown` | MongoDB aggregation | "what areas does Prof X work in" |
+| `search_ips` / `get_ip_details` / `get_ip_stats` / `find_ips_by_faculty` / `lookup_ipc_classification` | MongoDB (`ipmetadatas`) + OpenSearch (`ip_documents`) + WIPO | "patents on lithium batteries", "IPC for drug delivery" |
+
+**Classification tool knobs** (research-area tools): `sort_by`, `limit`, and (for
+papers) `year_from`/`year_to` let the bot answer custom rankings/filters —
+e.g. `faculty_by_classification(theme=…, sort_by="paper_count", limit=5)`.
+The resolvers accept approximate theme/domain names (exact → substring →
+token-overlap), and `classification` is absent on unclassified papers.
 
 ## Environment variables
 
@@ -200,9 +215,12 @@ See [`.env.example`](.env.example) for the full list. Key settings:
 | `GROQ_API_KEY` | — | **Required.** xAI API key (legacy env name) |
 | `GROQ_MODEL` | `grok-4.3` | Main LLM for tool selection + answers |
 | `GROQ_EXTRACT_MODEL` | `grok-3-mini` | Cheap model for query parsing |
-| `MAX_TOOL_ROUNDS` | `1` | Agent tool-call limit |
+| `MAX_TOOL_ROUNDS` | `2` | Agent tool-call rounds per query |
 | `CHAT_TOP_K` | `8` | Papers retrieved per search |
+| `CHAT_MAX_HISTORY_TURNS` | `5` | Recent conversation turns fed to the model (trimmed to `HISTORY_TOKEN_BUDGET`) |
 | `LLM_CACHE_TTL` | `90` | Response cache TTL (seconds; `0` = off) |
+
+> Answer LLM temperature is fixed at **0** (in `llm/groq_client.py`) for faithful, grounded replies — not env-configurable.
 | `ALLOWED_ORIGINS` | `*` | CORS origins (comma-separated or JSON array) |
 
 ## Project structure
