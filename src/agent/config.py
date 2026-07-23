@@ -73,6 +73,11 @@ class Settings(BaseSettings):
     # Search API (HTTP fallback when MESH_TRANSPORT=http)
     SEARCH_API_URL: str = "http://localhost:3001"
 
+    # Main backend (directory). Used at startup to build the department/centre/
+    # school reference from the SAME endpoint the Directory page calls, so the
+    # bot's lists match that page exactly.
+    BACKEND_API_URL: str = "http://localhost:3002"
+
     # Per-user daily message quota (IST calendar day). Only categories listed
     # here (comma-separated, case-insensitive substring match against the
     # IITD OAuth `category` claim) are subject to the limit — see
@@ -109,7 +114,7 @@ class Settings(BaseSettings):
     EMBEDDING_CACHE_TTL: int = 86400
 
     # Per-tool output token caps (approximate char counts; 1 token ≈ 4 chars)
-    TOKEN_CAP_SEARCH_PAPERS: int = 4000
+    TOKEN_CAP_SEARCH_PAPERS: int = 8000
     TOKEN_CAP_FACULTY_PROFILE: int = 2000
     TOKEN_CAP_PUBLICATION_STATS: int = 1500
     TOKEN_CAP_DEPARTMENT_PROFILE: int = 2500
@@ -126,7 +131,7 @@ class Settings(BaseSettings):
     TOKEN_CAP_THEMATIC_AREAS: int = 2000
     TOKEN_CAP_RESEARCH_DOMAINS: int = 3000
     TOKEN_CAP_CLASSIFICATION_PAPERS: int = 4000
-    TOKEN_CAP_CLASSIFICATION_FACULTY: int = 3000
+    TOKEN_CAP_CLASSIFICATION_FACULTY: int = 4500
     TOKEN_CAP_THEME_BREAKDOWN: int = 2500
     TOKEN_CAP_THEME_DISTRIBUTION: int = 2500
     TOKEN_CAP_DEFAULT: int = 1500
@@ -138,8 +143,13 @@ class Settings(BaseSettings):
     IPC_LOOKUP_TIMEOUT_MS: int = 4000
     IPC_CACHE_TTL: int = 2_592_000  # 30 days
 
-    # Context budget: chars reserved for the answer generation
-    CONTEXT_ANSWER_RESERVE: int = 4096
+    # Context budget for answer generation. _enforce_context_budget allows
+    # CONTEXT_ANSWER_RESERVE * 4 characters across ALL messages — system prompt
+    # included. The system prompt now carries the full IIT Delhi structural
+    # reference (~14k chars), so this must leave room for that PLUS history,
+    # the user message, and every tool result; otherwise tool outputs get
+    # replaced with {"truncated": true} and the bot answers "I couldn't find that".
+    CONTEXT_ANSWER_RESERVE: int = 12288
 
 
 settings = Settings()

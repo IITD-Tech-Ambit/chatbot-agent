@@ -67,6 +67,85 @@ def _summarize_result(data: Any) -> str:
     return _short(data)
 
 
+def _build_explore_link(tool_name: str, args: Any) -> dict | None:
+    """Map a search tool's call arguments to an Explore deep-link descriptor.
+
+    The frontend turns this into a "Go to Explore" button that reopens the
+    SAME query + filters on the Explore page (/explore or /explore/ip) so the
+    user can browse the full advanced-search result set.
+    """
+    if not isinstance(args, dict):
+        return None
+    query = (args.get("query") or "").strip()
+    if not query:
+        return None
+
+    filters: dict[str, Any] = {}
+    if args.get("year_from"):
+        filters["year_from"] = args["year_from"]
+    if args.get("year_to"):
+        filters["year_to"] = args["year_to"]
+
+    if tool_name == "search_research":
+        kind = "research"
+        dts = args.get("document_types") or []
+        if isinstance(dts, list) and dts:
+            filters["document_type"] = dts[0]
+    else:  # search_ip
+        kind = "ip"
+        toi = args.get("type_of_ip") or []
+        if isinstance(toi, list) and toi:
+            filters["type_of_ip"] = toi[0]
+        if args.get("field_of_invention"):
+            filters["field_of_invention"] = args["field_of_invention"]
+        if args.get("country"):
+            filters["country"] = args["country"]
+
+    payload: dict[str, Any] = {"kind": kind, "query": query, "mode": "advanced"}
+    if args.get("sort"):
+        payload["sort"] = args["sort"]
+    si = args.get("search_in")
+    if isinstance(si, list) and si:
+        payload["search_in"] = si
+    if filters:
+        payload["filters"] = filters
+    return payload
+
+
+def _build_research_area_link(data: Any) -> dict | None:
+    """Map a Research Areas tool's `selection` output to a deep-link descriptor
+    for the "Browse in Research Areas" button (/research-areas?theme&domain&department)."""
+    if not isinstance(data, dict):
+        return None
+    sel = data.get("selection")
+    if not isinstance(sel, dict):
+        return None
+    theme = sel.get("theme") if isinstance(sel.get("theme"), dict) else None
+    domain = sel.get("domain") if isinstance(sel.get("domain"), dict) else None
+    dept = sel.get("department") if isinstance(sel.get("department"), dict) else None
+
+    theme_slug = theme.get("slug") if theme else None
+    domain_slug = domain.get("slug") if domain else None
+    dept_code = dept.get("code") if dept else None
+    # The Research Areas page is theme-first (the picker cascades theme -> domain),
+    # so a deep-link needs a theme to be a valid, selectable page state. A
+    # domain-only selection (e.g. a multi-theme domain the bot is still
+    # disambiguating) must NOT produce a button.
+    if not theme_slug:
+        return None
+
+    label_parts = [n for n in (theme.get("name") if theme else None,
+                               domain.get("name") if domain else None) if n]
+    payload: dict[str, Any] = {"kind": "research_area", "label": " › ".join(label_parts) or "Research Areas"}
+    if theme_slug:
+        payload["theme"] = theme_slug
+    if domain_slug:
+        payload["domain"] = domain_slug
+    if dept_code:
+        payload["department"] = dept_code
+    return payload
+
+
 def require_user_id(request: Request) -> str:
     """Trusted identity injected by the api-gateway (x-user-id). The gateway
     strips any client-supplied copy, so an empty header means the request
@@ -149,6 +228,8 @@ async def _cached_stream(cached: dict, start_time: float) -> AsyncGenerator[str,
         yield _sse("sources", cached["sources"])
     if cached.get("chart"):
         yield _sse("chart", cached["chart"])
+    if cached.get("explore"):
+        yield _sse("explore", cached["explore"])
     logger.info("CHAT answer (cached): %s", _short(cached.get("answer", ""), 2000))
     yield _sse("token", TokenEvent(text=cached["answer"]).model_dump())
     yield _sse("done", DoneEvent(
@@ -191,9 +272,11 @@ async def _agent_stream(
     }
 
     sources_emitted = False
+    explore_emitted = False
     collected_answer = ""
     collected_sources: list[dict] = []
     collected_chart: dict | None = None
+    collected_explore: dict | None = None
     first_token_recorded = False
     tools_used: list[str] = []
 
@@ -213,6 +296,13 @@ async def _agent_stream(
                     step=label, detail=None
                 ).model_dump())
 
+                if name in ("search_research", "search_ip") and not explore_emitted:
+                    link = _build_explore_link(name, tool_input)
+                    if link:
+                        yield _sse("explore", link)
+                        collected_explore = link
+                        explore_emitted = True
+
             elif kind == "on_tool_end":
                 try:
                     raw_output = ev.get("data", {}).get("output", "")
@@ -230,14 +320,14 @@ async def _agent_stream(
                         yield _sse("chart", chart_payload)
                         collected_chart = chart_payload
 
-                    if name == "search_papers":
+                    if name in ("search_research", "search_papers"):
                         deduped = papers_to_sources(data.get("papers", []))
                         if deduped and not sources_emitted:
                             yield _sse("sources", deduped)
                             collected_sources = deduped
                             sources_emitted = True
 
-                    elif name in ("search_ips", "find_ips_by_faculty"):
+                    elif name in ("search_ip", "search_ips", "find_ips_by_faculty"):
                         deduped = ips_to_sources(data.get("ips", []))
                         if deduped and not sources_emitted:
                             yield _sse("sources", deduped)
@@ -250,6 +340,13 @@ async def _agent_stream(
                             yield _sse("sources", deduped)
                             collected_sources = deduped
                             sources_emitted = True
+
+                    if name == "experts_by_research_area" and not explore_emitted:
+                        ra_link = _build_research_area_link(data)
+                        if ra_link:
+                            yield _sse("explore", ra_link)
+                            collected_explore = ra_link
+                            explore_emitted = True
 
                 except (json.JSONDecodeError, AttributeError, TypeError):
                     pass
@@ -282,6 +379,7 @@ async def _agent_stream(
                 "answer": collected_answer,
                 "sources": collected_sources or None,
                 "chart": collected_chart,
+                "explore": collected_explore,
             })
 
     except Exception as e:
