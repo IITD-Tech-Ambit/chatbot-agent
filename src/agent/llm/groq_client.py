@@ -3,7 +3,7 @@
 xAI uses an OpenAI-compatible API at https://api.x.ai/v1.
 Provides two instances:
 - make_tool_llm(): temperature=0, deterministic tool selection.
-- make_answer_llm(): temperature=0.3, tagged ["answer"] for SSE stream filtering.
+- make_answer_llm(): temperature=0, tagged ["answer"] for SSE stream filtering.
 
 Outbound calls to api.x.ai go through the campus proxy when LLM_HTTP_PROXY_URL
 is set. Deliberately NOT the generic HTTP_PROXY/HTTPS_PROXY env vars: those
@@ -63,13 +63,19 @@ def make_answer_llm(
     max_tokens: int = 1024,
     proxy_url: str | None = None,
 ) -> BaseChatModel:
-    """LLM instance for the final answer stream (temperature=0.3, tagged)."""
+    """LLM instance for the final answer stream (temperature=0, tagged).
+
+    Temperature is 0 (not 0.3) to keep the answer faithful to tool results —
+    higher temperature let the model embellish with plausible-but-unsupported
+    detail (invented counts, "top contributors", inferred categories), which is
+    the main source of post-tool hallucination.
+    """
     http_client, http_async_client = _http_clients(proxy_url)
     llm = ChatOpenAI(
         model=model,
         base_url=XAI_BASE_URL,
         api_key=api_key,
-        temperature=0.3,
+        temperature=0,
         max_tokens=max_tokens,
         http_client=http_client,
         http_async_client=http_async_client,

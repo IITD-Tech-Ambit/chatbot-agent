@@ -35,7 +35,16 @@ def build_tool(deps: ToolDeps) -> BaseTool:
         department: Optional[str] = None,
         limit: int = 10,
     ) -> str:
-        """Find IIT Delhi faculty who have a specific expertise or skill listed in their profile. Use when the user asks about a precise technical skill or research area keyword."""
+        """Find IIT Delhi faculty who list a specific skill or technique in their
+        expertise profile (e.g. "computer vision", "VLSI design", "finite
+        element analysis"). Results are ordered by h-index and do NOT include
+        per-topic paper counts.
+
+        USE THIS only when the user asks for faculty who *have expertise in* a
+        named skill/keyword. Do NOT use it when the user wants professors ranked
+        by NUMBER OF PAPERS on a topic — use `find_faculty_for_topic` for that
+        (it returns and ranks by relevant paper count). For the fixed research
+        themes/domains, use `faculty_by_classification`."""
         terms = [t.strip() for t in expertise.replace(",", " ").split() if len(t.strip()) >= 2]
         if not terms:
             terms = [expertise.strip()]

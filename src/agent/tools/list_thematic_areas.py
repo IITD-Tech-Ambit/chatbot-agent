@@ -17,13 +17,21 @@ def build_tool(deps: ToolDeps) -> BaseTool:
     cap = deps.config.TOKEN_CAP_THEMATIC_AREAS
 
     @tool
-    async def list_thematic_areas(department: Optional[str] = None) -> str:
+    async def list_thematic_areas(
+        department: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> str:
         """List IIT Delhi's top-level research thematic areas (the strategic
         themes papers are classified into), each with its paper count and
         distinct faculty count. Use for questions like "what research themes /
         areas does IIT Delhi work on", "how many papers are in each theme", or
         the overall research landscape. Pass `department` to scope the counts to
-        a single department."""
+        a single department.
+
+        Knobs:
+          - `sort_by`: "paper_count" (default), "faculty_count", or "name".
+          - `limit`: return only the top N (e.g. "top 3 themes" → 3)."""
         if taxonomy_repo is None:
             return json.dumps({"themes": [], "error": "Classification data is not available"})
 
@@ -58,7 +66,15 @@ def build_tool(deps: ToolDeps) -> BaseTool:
         except Exception as exc:
             return json.dumps({"themes": [], "error": f"Lookup failed: {type(exc).__name__}"})
 
-        out.sort(key=lambda x: x.get("paper_count", 0), reverse=True)
+        mode = (sort_by or "").strip().lower()
+        if mode in ("faculty_count", "faculty"):
+            out.sort(key=lambda x: x.get("faculty_count", 0), reverse=True)
+        elif mode == "name":
+            out.sort(key=lambda x: (x.get("name") or "").lower())
+        else:  # paper_count (default)
+            out.sort(key=lambda x: x.get("paper_count", 0), reverse=True)
+        if limit and limit >= 1:
+            out = out[: int(limit)]
         result = {"department": department, "count": len(out), "themes": out}
         output = json.dumps(result, default=str)
         while len(output) > cap and result["themes"]:

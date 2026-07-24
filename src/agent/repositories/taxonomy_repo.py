@@ -190,20 +190,30 @@ class TaxonomyRepository:
         department_ref: ObjectId | None = None,
         kerberos: str | None = None,
         limit: int = 10,
+        sort_by: str = "recency",
+        year_from: int | None = None,
+        year_to: int | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
         match = self._classification_match(theme_id, domain_id, department_ref, kerberos)
         if not match:
             return [], 0
+        if year_from or year_to:
+            yr: dict[str, int] = {}
+            if year_from:
+                yr["$gte"] = year_from
+            if year_to:
+                yr["$lte"] = year_to
+            match["publication_year"] = yr
         projection = {
             "title": 1, "abstract": 1, "link": 1, "publication_year": 1,
             "document_type": 1, "citation_count": 1, "document_scopus_id": 1,
             "document_eid": 1, "classification.topics": 1,
         }
-        cursor = (
-            self._papers.find(match, projection)
-            .sort([("publication_year", -1), ("citation_count", -1)])
-            .limit(limit)
-        )
+        if sort_by == "citations":
+            sort = [("citation_count", -1), ("publication_year", -1)]
+        else:  # "recency" (default)
+            sort = [("publication_year", -1), ("citation_count", -1)]
+        cursor = self._papers.find(match, projection).sort(sort).limit(limit)
         items = await cursor.to_list(length=limit)
         total = await self._papers.count_documents(match)
         return items, total
@@ -253,3 +263,40 @@ class TaxonomyRepository:
         if not match:
             return 0
         return await self._papers.count_documents(match)
+
+    async def faculty_paper_counts(
+        self,
+        theme_id: ObjectId | None = None,
+        domain_id: ObjectId | None = None,
+        department_ref: ObjectId | None = None,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """[{kerberos, paper_count}] — papers each IITD faculty authored within a
+        theme/domain (+ optional department), ranked by count. The classification
+        filter is paper-level (matched before $unwind); the department filter is
+        author-level (matched after $unwind) so a paper only counts toward faculty
+        actually in that department.
+        """
+        pre_match: dict[str, Any] = {}
+        if theme_id is not None:
+            pre_match["classification.thematic_area_id"] = theme_id
+        if domain_id is not None:
+            pre_match["classification.domain_id"] = domain_id
+        if not pre_match:
+            return []
+        post_match: dict[str, Any] = {
+            "iitd_authors.kerberos": {"$exists": True, "$nin": [None, ""]}
+        }
+        if department_ref is not None:
+            post_match["iitd_authors.department_ref"] = department_ref
+        pipeline = [
+            {"$match": pre_match},
+            {"$unwind": "$iitd_authors"},
+            {"$match": post_match},
+            {"$group": {"_id": "$iitd_authors.kerberos", "paper_count": {"$sum": 1}}},
+            {"$sort": {"paper_count": -1}},
+            {"$limit": limit},
+        ]
+        cursor = self._papers.aggregate(pipeline)
+        rows = await cursor.to_list(length=limit)
+        return [{"kerberos": r["_id"], "paper_count": r.get("paper_count", 0)} for r in rows]

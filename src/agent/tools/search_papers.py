@@ -26,7 +26,12 @@ def build_tool(deps: ToolDeps) -> BaseTool:
 
     @tool(args_schema=SearchPapersArgs)
     async def search_papers(query: str, year_from: int | None = None, year_to: int | None = None) -> str:
-        """Semantic search over IIT Delhi research papers. Use for questions about research content, findings, or topics."""
+        """Semantic (free-text) search over IIT Delhi research papers. Use for
+        questions about research content, findings, or an arbitrary topic /
+        keyword (e.g. "perovskite solar cells", "papers by Prof X on Y"). This
+        is the default for any topic that is NOT one of the fixed classification
+        categories. To browse papers that belong to a named thematic area or
+        research domain, use `papers_by_classification` instead."""
         try:
             papers = await retriever.retrieve(query, abstract_max_chars=150)
         except Exception as exc:

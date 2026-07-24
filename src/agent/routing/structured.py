@@ -70,12 +70,25 @@ PATTERNS: list[tuple[re.Pattern, str]] = [  # type: ignore[type-arg]
 ]
 
 
+# "How do I browse…", "where can I find…" are questions about USING the portal,
+# not metadata lookups. They must reach the LLM so it can answer and point at the
+# right page. ("how many faculty…" is a real lookup and is deliberately excluded.)
+_NAVIGATIONAL = re.compile(
+    r"^\s*(?:how\s+(?:do|can|would|should)\s+i\b|how\s+to\b|where\s+(?:can|do|should)\s+i\b|can\s+i\b)",
+    re.I,
+)
+
+
 def match_structured(message: str) -> RouteMatch | None:
     msg = message.strip()
+    if _NAVIGATIONAL.search(msg):
+        return None
     for pattern, handler in PATTERNS:
         m = pattern.search(msg)
         if m:
-            capture = m.group(1).strip() if m.lastindex else ""
+            # Trailing punctuation must not leak into the captured entity, or
+            # lookups fail on things like 'Civil Engineering?'.
+            capture = m.group(1).strip().rstrip("?.!,;:").strip() if m.lastindex else ""
             return RouteMatch(handler=handler, capture=capture)
     return None
 

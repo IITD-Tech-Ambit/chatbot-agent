@@ -58,6 +58,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.ip_repo = ip_repo
     app.state.taxonomy_repo = taxonomy_repo
 
+    # Build the fixed IIT Delhi structural reference (thematic areas → domains,
+    # departments/centres/schools) and inline it into the system prompt so the
+    # bot answers structural/naming questions without a tool call.
+    from agent.llm.reference import build_static_reference
+    from agent.llm.prompts import set_static_reference
+
+    try:
+        reference = await build_static_reference(db, settings.BACKEND_API_URL)
+        set_static_reference(reference)
+        logger.info("Static structure reference built (%d chars)", len(reference))
+    except Exception as exc:
+        logger.warning("Could not build static structure reference: %s", exc)
+
     # Mesh transports (composition root: gRPC via Envoy or HTTP for dev)
     from agent.rag.embeddings import EmbeddingClient
     from agent.rag.query_parser import QueryParser

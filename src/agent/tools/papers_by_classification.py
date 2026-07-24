@@ -22,18 +22,32 @@ def build_tool(deps: ToolDeps) -> BaseTool:
         theme: Optional[str] = None,
         domain: Optional[str] = None,
         department: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        limit: Optional[int] = None,
+        year_from: Optional[int] = None,
+        year_to: Optional[int] = None,
     ) -> str:
         """List IIT Delhi papers CLASSIFIED into a specific thematic area and/or
-        research domain, most recent and most cited first. Use when the user
-        names a taxonomy category — e.g. "papers in the Energy theme", "show
-        papers in the Machine Learning domain", "Photonics papers from Physics".
-        Provide at least one of `theme` or `domain` (optionally `department`).
-        This is CATEGORY browsing by the fixed classification, NOT free-text
-        topic search — for an arbitrary topic or keyword use `search_papers`."""
+        research domain. Use when the user names a taxonomy category — e.g.
+        "papers in the Energy theme", "most cited papers in the Machine Learning
+        domain", "recent Photonics papers from Physics". Provide at least one of
+        `theme` or `domain` (optionally `department`). This is CATEGORY browsing
+        by the fixed classification, NOT free-text topic search — for an
+        arbitrary topic or keyword use `search_papers`.
+
+        Knobs:
+          - `sort_by`: "recency" (default, newest first) or "citations" (most
+            cited first — use when the user asks for "top"/"most cited"/"highly
+            cited" papers).
+          - `limit`: how many papers to return (default 10, max 25).
+          - `year_from` / `year_to`: restrict to a publication-year range."""
         if taxonomy_repo is None:
             return json.dumps({"papers": [], "error": "Classification data is not available"})
         if not theme and not domain:
             return json.dumps({"papers": [], "error": "Provide a theme and/or domain to browse by classification."})
+
+        sort_mode = "citations" if (sort_by or "").strip().lower() in ("citations", "cited", "citation") else "recency"
+        n = 10 if not limit or limit < 1 else min(int(limit), 25)
 
         theme_id = domain_id = dept_ref = None
         theme_name = domain_name = None
@@ -55,7 +69,8 @@ def build_tool(deps: ToolDeps) -> BaseTool:
 
         try:
             docs, total = await taxonomy_repo.papers_in_context(
-                theme_id=theme_id, domain_id=domain_id, department_ref=dept_ref, limit=10
+                theme_id=theme_id, domain_id=domain_id, department_ref=dept_ref,
+                limit=n, sort_by=sort_mode, year_from=year_from, year_to=year_to,
             )
         except Exception as exc:
             return json.dumps({"papers": [], "error": f"Lookup failed: {type(exc).__name__}"})
@@ -79,6 +94,8 @@ def build_tool(deps: ToolDeps) -> BaseTool:
 
         result = {
             "theme": theme_name, "domain": domain_name, "department": department,
+            "sorted_by": "most cited" if sort_mode == "citations" else "most recent",
+            "year_from": year_from, "year_to": year_to,
             "total_matching": total, "papers": papers,
         }
         output = json.dumps(result, default=str)

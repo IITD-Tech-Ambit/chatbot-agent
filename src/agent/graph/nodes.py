@@ -75,7 +75,10 @@ def _enforce_context_budget(messages: list, caps: dict[str, int]) -> list:
                     data = json.loads(content)
                     truncated = False
                     if isinstance(data, dict):
-                        for list_key in ("papers", "ips", "faculty", "similar_papers", "groups", "comparison", "trend", "results", "departments", "themes", "domains", "distribution"):
+                        # NOTE: every list-bearing tool output key must appear here.
+                        # If none matches, the fallback slices the raw JSON string
+                        # mid-object and the answer LLM receives malformed data.
+                        for list_key in ("papers", "ips", "experts", "faculty", "related_faculty", "similar_papers", "groups", "comparison", "trend", "results", "departments", "themes", "thematic_areas", "domains", "distribution"):
                             items = data.get(list_key)
                             if isinstance(items, list):
                                 while items and len(json.dumps(data, default=str)) > tool_cap:

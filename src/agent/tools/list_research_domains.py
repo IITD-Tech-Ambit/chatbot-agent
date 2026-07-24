@@ -18,7 +18,10 @@ def build_tool(deps: ToolDeps) -> BaseTool:
 
     @tool
     async def list_research_domains(
-        theme: Optional[str] = None, department: Optional[str] = None
+        theme: Optional[str] = None,
+        department: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        limit: Optional[int] = None,
     ) -> str:
         """List research domains (the discipline axis, e.g. "Power Electronics",
         "Machine Learning", "Photonics") with their paper and faculty counts.
@@ -26,7 +29,11 @@ def build_tool(deps: ToolDeps) -> BaseTool:
         theme AND one domain. Pass `theme` to list only the domains that carry
         papers within a given thematic area; pass `department` to scope counts
         to a department. Use for "what research domains / fields exist", "which
-        domains fall under theme X", or "what fields does department Y work in"."""
+        domains fall under theme X", or "what fields does department Y work in".
+
+        Knobs:
+          - `sort_by`: "paper_count" (default), "faculty_count", or "name".
+          - `limit`: return only the top N domains (e.g. "top 10 domains" → 10)."""
         if taxonomy_repo is None:
             return json.dumps({"domains": [], "error": "Classification data is not available"})
 
@@ -66,7 +73,15 @@ def build_tool(deps: ToolDeps) -> BaseTool:
             return json.dumps({"domains": [], "error": f"Lookup failed: {type(exc).__name__}"})
 
         out = [d for d in out if d.get("paper_count", 0) > 0]
-        out.sort(key=lambda x: x.get("paper_count", 0), reverse=True)
+        mode = (sort_by or "").strip().lower()
+        if mode in ("faculty_count", "faculty"):
+            out.sort(key=lambda x: x.get("faculty_count", 0), reverse=True)
+        elif mode == "name":
+            out.sort(key=lambda x: (x.get("name") or "").lower())
+        else:  # paper_count (default)
+            out.sort(key=lambda x: x.get("paper_count", 0), reverse=True)
+        if limit and limit >= 1:
+            out = out[: int(limit)]
         result = {
             "theme": theme_name, "department": department,
             "count": len(out), "domains": out,
