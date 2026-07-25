@@ -17,8 +17,6 @@ class TestMatchStructured:
         ("h.index of rajeev", "get_h_index"),
         ("citations of Prof. Kumar", "get_citations"),
         ("citation count for Amit", "get_citations"),
-        ("faculty in Computer Science department", "get_faculty_by_dept"),
-        ("professors from EE dept", "get_faculty_by_dept"),
         ("papers by Amit Kumar", "get_papers_by_author"),
         ("paper by Prof. Singh", "get_papers_by_author"),
     ])
@@ -54,6 +52,8 @@ class TestMatchStructured:
         "Tell me about solar cells",
         "Compare Prof. A and Prof. B",
         "Which faculty have expertise in VLSI?",
+        "faculty in Computer Science department",
+        "professors from EE dept",
     ])
     def test_non_matching_queries(self, msg: str):
         match = match_structured(msg)
