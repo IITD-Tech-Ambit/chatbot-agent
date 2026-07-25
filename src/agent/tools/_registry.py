@@ -29,6 +29,8 @@ ENABLED_TOOL_MODULES: frozenset[str] = frozenset({
     # Structural/naming questions are answered from the system-prompt reference;
     # this tool covers the dynamic experts + area counts.
     "experts_by_research_area",
+    # Directory: faculty within a department / centre / school
+    "list_department_faculty",
     # Chart-producing tools (see agent.api.chart_builder._CHART_BUILDERS)
     "research_trends",       # get_research_trends
     "compare_faculty",       # compare_faculty

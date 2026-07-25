@@ -178,13 +178,14 @@ the corresponding page always agree.
 
 Two mechanisms make this work without a tool call:
 
-- **Static structural reference** — built from MongoDB at startup
+- **Static structural reference** — built at startup
   ([`agent/llm/reference.py`](src/agent/llm/reference.py)) and inlined into the
   system prompt: the 9 thematic areas → their domains, and the departments /
   centres / schools **exactly as the Directory page lists them** (pulled from the
-  backend's `/directory/grouped` so the sets match). Structural/naming questions
-  ("what themes exist", "which theme is CFD under", "list the centres") are
-  answered from this — no tool, no embeddings.
+  backend's `/directory/grouped` so the sets match), with each department's
+  current **Head of Department** (mirrors the Directory page's HoD map). Structural
+  questions ("what themes exist", "which theme is CFD under", "list the centres",
+  "who is the HoD of Civil") are answered from this — no tool, no embeddings.
 - **Deep-link buttons** — when a search/experts tool runs, the answer carries a
   button that reopens the matching page (`/explore`, `/explore/ip`,
   `/research-areas`) with the **same query + filters** already applied. Other
@@ -193,13 +194,14 @@ Two mechanisms make this work without a tool call:
 ## Tools
 
 Tools are auto-discovered from `src/agent/tools/*.py`, gated by an allowlist in
-[`_registry.py`](src/agent/tools/_registry.py). **8 tools** are active:
+[`_registry.py`](src/agent/tools/_registry.py). **9 tools** are active:
 
 | Tool | Mirrors | What it does |
 |------|---------|--------------|
 | `search_research` | Explore (papers) | Same search-api + client-side transforms as the Explore page. Knobs: `year_from/to`, `sort` (relevance/citations), `group_by_department`, `author` (professor drill-down). Returns the top 10 papers **in the same order Explore shows**, plus the **People list** (`faculty.top_faculty` — top researchers by matching-paper count across the WHOLE result set; omitted on an author drill-down). |
 | `search_ip` | ExploreIP (patents) | Advanced patent/IP search. *(Not yet at parity with `search_research` — pending new IP backend APIs; only works where the `ip_documents` index exists.)* |
 | `experts_by_research_area` | Research Areas | Experts in a thematic area (required) → optional domain → optional department, with the area's paper/faculty counts. Wraps the `/taxonomy/*` endpoints. |
+| `list_department_faculty` | Directory | Faculty of a named **department / centre / school** (`category` arg). Returns the top 10 by h-index — the Directory page's order — plus total count and a button that opens that unit's expanded list on `/directory`. |
 | `get_research_trends` | — | A topic's publications over years → line chart (semantic retrieval) |
 | `get_publication_stats` | — | Paper counts by year / department / type → bar chart |
 | `get_department_profile` | — | One department's overview + publication chart |
@@ -208,8 +210,13 @@ Tools are auto-discovered from `src/agent/tools/*.py`, gated by an allowlist in
 
 The 5 chart tools return structured data the frontend auto-renders. Everything a
 prior release did via ~20 finer-grained tools (faculty lookups, classification
-browse, department lists, IP details) is now served by these 8 plus the static
+browse, department lists, IP details) is now served by these 9 plus the static
 reference and the structured fast-path (`agent/routing/structured.py`).
+
+> **Directory coverage note:** there is not yet a consolidated *individual
+> faculty profile* tool (email, designation, expertise, publications) — the
+> fast-path answers h-index / citations / papers-by piecemeal, and
+> `list_department_faculty` covers a unit's roster.
 
 ## Environment variables
 

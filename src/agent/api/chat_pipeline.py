@@ -358,6 +358,13 @@ async def _agent_stream(
                             collected_explore = link
                             explore_emitted = True
 
+                    if name == "list_department_faculty" and not explore_emitted:
+                        link = data.get("explore_link") if isinstance(data, dict) else None
+                        if isinstance(link, dict) and link.get("unit"):
+                            yield _sse("explore", link)
+                            collected_explore = link
+                            explore_emitted = True
+
                 except (json.JSONDecodeError, AttributeError, TypeError):
                     pass
 
