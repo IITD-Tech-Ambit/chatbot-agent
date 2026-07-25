@@ -167,37 +167,49 @@ Request
 - **Repository layer** — tools depend on `FacultyRepository` / `ResearchRepository`; tests mock at this seam
 - **Kerberos linkage** — paper→faculty attribution uses indexed `kerberos` (email prefix), not Scopus `field_associated`
 
+## Design: inform **and** navigate
+
+The bot is both an information assistant and a navigation aid for the portal. It
+answers briefly (a headline + a short preview of ~3–5 items), then hands the user
+off to the full page for the complete data. Its whole surface deliberately mirrors
+three portal tabs — **Explore** (papers/IP), **Research Areas** (the classification
+taxonomy), and **Directory** (departments/centres/schools) — so a chat answer and
+the corresponding page always agree.
+
+Two mechanisms make this work without a tool call:
+
+- **Static structural reference** — built from MongoDB at startup
+  ([`agent/llm/reference.py`](src/agent/llm/reference.py)) and inlined into the
+  system prompt: the 9 thematic areas → their domains, and the departments /
+  centres / schools **exactly as the Directory page lists them** (pulled from the
+  backend's `/directory/grouped` so the sets match). Structural/naming questions
+  ("what themes exist", "which theme is CFD under", "list the centres") are
+  answered from this — no tool, no embeddings.
+- **Deep-link buttons** — when a search/experts tool runs, the answer carries a
+  button that reopens the matching page (`/explore`, `/explore/ip`,
+  `/research-areas`) with the **same query + filters** already applied. Other
+  pages are linked inline.
+
 ## Tools
 
-Tools are auto-discovered from `src/agent/tools/*.py` at startup.
+Tools are auto-discovered from `src/agent/tools/*.py`, gated by an allowlist in
+[`_registry.py`](src/agent/tools/_registry.py). **8 tools** are active:
 
-| Tool | Primary source | Example query |
-|------|----------------|---------------|
-| `search_papers` | OpenSearch (BM25 + kNN) + MongoDB | "research on perovskite solar cells" |
-| `find_faculty_for_topic` | search-api HTTP + MongoDB | "who works on ML" |
-| `find_faculty_by_expertise` | MongoDB | "faculty with expertise in robotics" |
-| `get_faculty_profile` | MongoDB (kerberos + scopus_id) | "Prof Kumar's publications" |
-| `get_publication_stats` | MongoDB aggregations | "papers by Civil Engineering" |
-| `get_department_profile` | MongoDB | "overview of CSE department" |
-| `list_departments` | MongoDB | "list all departments" |
-| `compare_faculty` | MongoDB | "compare Prof A vs Prof B" |
-| `find_similar_papers` | re-embed + kNN | "papers similar to this one" |
-| `get_research_trends` | MongoDB aggregation | "ML paper trends 2018–2023" |
-| `find_interdisciplinary_papers` | OpenSearch + MongoDB | "cross-department work on AI" |
-| `get_top_faculty` | MongoDB | "top cited faculty in EE" |
-| `list_thematic_areas` | MongoDB (taxonomy + facet rollups) | "what research themes does IIT Delhi have" |
-| `list_research_domains` | MongoDB (taxonomy + facet rollups) | "domains under the Energy theme" |
-| `papers_by_classification` | MongoDB (`classification.*`) | "most cited papers in the ML domain since 2022" |
-| `faculty_by_classification` | MongoDB (facet members / per-faculty counts) | "top 5 faculty by paper count in Manufacturing" |
-| `theme_distribution` | MongoDB aggregation | "IIT Delhi's research profile by theme" |
-| `faculty_theme_breakdown` | MongoDB aggregation | "what areas does Prof X work in" |
-| `search_ips` / `get_ip_details` / `get_ip_stats` / `find_ips_by_faculty` / `lookup_ipc_classification` | MongoDB (`ipmetadatas`) + OpenSearch (`ip_documents`) + WIPO | "patents on lithium batteries", "IPC for drug delivery" |
+| Tool | Mirrors | What it does |
+|------|---------|--------------|
+| `search_research` | Explore (papers) | Same search-api + client-side transforms as the Explore page. Knobs: `year_from/to`, `sort` (relevance/citations), `group_by_department`, `author` (professor drill-down). Returns the top 10 papers **in the same order Explore shows**, plus the **People list** (`faculty.top_faculty` — top researchers by matching-paper count across the WHOLE result set; omitted on an author drill-down). |
+| `search_ip` | ExploreIP (patents) | Advanced patent/IP search. *(Not yet at parity with `search_research` — pending new IP backend APIs; only works where the `ip_documents` index exists.)* |
+| `experts_by_research_area` | Research Areas | Experts in a thematic area (required) → optional domain → optional department, with the area's paper/faculty counts. Wraps the `/taxonomy/*` endpoints. |
+| `get_research_trends` | — | A topic's publications over years → line chart (semantic retrieval) |
+| `get_publication_stats` | — | Paper counts by year / department / type → bar chart |
+| `get_department_profile` | — | One department's overview + publication chart |
+| `compare_faculty` | — | Two professors side by side → chart |
+| `get_ip_stats` | — | Patent/IP counts by year / department / type / country / IPC → chart |
 
-**Classification tool knobs** (research-area tools): `sort_by`, `limit`, and (for
-papers) `year_from`/`year_to` let the bot answer custom rankings/filters —
-e.g. `faculty_by_classification(theme=…, sort_by="paper_count", limit=5)`.
-The resolvers accept approximate theme/domain names (exact → substring →
-token-overlap), and `classification` is absent on unclassified papers.
+The 5 chart tools return structured data the frontend auto-renders. Everything a
+prior release did via ~20 finer-grained tools (faculty lookups, classification
+browse, department lists, IP details) is now served by these 8 plus the static
+reference and the structured fast-path (`agent/routing/structured.py`).
 
 ## Environment variables
 
@@ -211,7 +223,8 @@ See [`.env.example`](.env.example) for the full list. Key settings:
 | `OPENSEARCH_INDEX` | `research_documents` | Paper index name |
 | `REDIS_URL` | `redis://localhost:6379` | Caches + rate limiting |
 | `EMBEDDING_SERVICE_URL` | `http://localhost:8000` | BGE embed + rerank service |
-| `SEARCH_API_URL` | `http://localhost:3001` | Faculty-for-topic search-api (live stack uses `:3000`) |
+| `SEARCH_API_URL` | `http://localhost:3001` | search-api: paper/IP search, faculty-for-query, taxonomy (`search-api:3001` in Docker) |
+| `BACKEND_API_URL` | `http://localhost:3002` | Main backend: Directory `/directory/grouped` (used at startup to build the department/centre/school reference) |
 | `GROQ_API_KEY` | — | **Required.** xAI API key (legacy env name) |
 | `GROQ_MODEL` | `grok-4.3` | Main LLM for tool selection + answers |
 | `GROQ_EXTRACT_MODEL` | `grok-3-mini` | Cheap model for query parsing |

@@ -41,6 +41,12 @@ class ResearchSearchClient:
         """Advanced IP/patent search (POST /api/v1/ip/search)."""
         return await self._post("/api/v1/ip/search", body)
 
+    async def author_scope(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Author-scoped paper search (POST /api/v1/search/author-scope) — the
+        Explore page's "click a professor" drill-down: that author's papers that
+        match the query, in the same order the page shows them."""
+        return await self._post("/api/v1/search/author-scope", body)
+
     async def faculty_for_query(
         self,
         query: str,
