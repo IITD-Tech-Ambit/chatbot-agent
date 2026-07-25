@@ -27,9 +27,10 @@ PATTERNS: list[tuple[re.Pattern, str]] = [  # type: ignore[type-arg]
     (re.compile(r"(?:rank(?:ed|ing)?)\s+(?:by|on)\s+(?:h[.\-\s]?index|citations?)", re.I), "top_faculty_hindex"),
     (re.compile(r"h[.\-\s]?index\s+(?:of|for)\s+(.+)", re.I), "get_h_index"),
     (re.compile(r"citation(?:s| count|count)?\s+(?:of|for)\s+(.+)", re.I), "get_citations"),
-    # NOTE: "faculty/professors in <unit>" is intentionally NOT fast-pathed — the
-    # list_department_faculty tool handles departments, centres AND schools (with
-    # the top-10 + Directory button), which the old dept-only shortcut could not.
+    (re.compile(
+        r"^\s*(?:faculty|professors?)\s+(?:in|from)\s+(.+?)(?:\s+(?:dept|department))?\s*\??\s*$",
+        re.I,
+    ), "get_faculty_by_dept"),
     (re.compile(r"papers?\s+by\s+(.+)", re.I), "get_papers_by_author"),
     # ^ and $ ensure "departments" cannot be buried as context inside a longer analytical sentence.
     # Covers: "what/which/list/show/tell me departments [at IIT]", "IIT Delhi departments", etc.
