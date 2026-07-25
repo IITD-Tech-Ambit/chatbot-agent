@@ -28,6 +28,29 @@ _DIRECTORY_CATEGORIES = [("departments", "Departments"), ("centres", "Centres"),
 # unreachable at startup.
 _FALLBACK_CATEGORY = {"Departments": "Department", "Centres": "Centre", "Schools": "School"}
 
+# Current Heads of Department (departments only — centres/schools have none),
+# with the HoD's kerberos for a profile link. Mirrors the Directory page's
+# hardcoded DEPT_HODS map (tech-ambit-explorer DepartmentGroupAccordionItem.tsx);
+# not in the DB, so kept in sync by hand.
+_DEPT_HODS: dict[str, tuple[str, str]] = {
+    "Applied Mechanics": ("Sawan S. Sinha", "sawan"),
+    "Biochemical Engineering & Biotechnology": ("Preeti Srivastava", "preeti"),
+    "Chemical Engineering": ("Anurag S. Rathore", "arathore"),
+    "Chemistry Department": ("S. Nagendran", "sisn"),
+    "Civil Engineering": ("Vasant Matsagar", "matsagar"),
+    "Computer Science & Engineering": ("Naveen Garg", "naveen"),
+    "Department of Design": ("Sumer Singh", "sumer"),
+    "Department of Energy Science & Engineering": ("Ramesh Narayanan", "rams"),
+    "Department of Management Studies": ("Surya Prakash Singh", "sprsingh"),
+    "Electrical Engineering": ("Shankar Prakriya", ""),
+    "Humanities & Social Sciences": ("Abhijit Banerji", "a_banerji"),
+    "Materials Science & Engineering": ("Leena Nebhani", "lnebhani"),
+    "Mathematics Department": ("Mani Mehra", "mmehra"),
+    "Mechanical Engineering": ("Subbarao P M V", "pmvs"),
+    "Physics Department": ("Sujeet Chaudhary", "sujeetc"),
+    "Textile & Fibre Engineering": ("Deepti Gupta", "deepti"),
+}
+
 
 async def _fetch_directory_units(base_url: str) -> dict[str, list[str]]:
     """Pull each Directory tab's unit list from the SAME endpoint the Directory
@@ -121,7 +144,19 @@ async def build_static_reference(db, backend_url: str | None = None) -> str:
     )
     for _, label in _DIRECTORY_CATEGORIES:
         names = units.get(label) or []
-        if names:
+        if not names:
+            continue
+        if label == "Departments":
+            # Departments carry their current Head of Department.
+            lines.append(f"- **Departments** ({len(names)}) — with current Head of Department (HoD):")
+            for nm in names:
+                hod = _DEPT_HODS.get(nm)
+                if hod and hod[0]:
+                    who = f"[{hod[0]}](/faculty/{hod[1]})" if hod[1] else hod[0]
+                    lines.append(f"  - {nm} — HoD: {who}")
+                else:
+                    lines.append(f"  - {nm}")
+        else:
             lines.append(f"- **{label}** ({len(names)}): " + ", ".join(names))
 
     return "\n".join(lines)

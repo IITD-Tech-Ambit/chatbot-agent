@@ -1,8 +1,14 @@
-"""search_research — the Explore page's advanced paper search, as a bot tool.
+"""search_research — operate the Explore page's paper search as a bot tool.
 
-Wraps search-api `POST /api/v1/search`: hybrid BM25 + semantic search over IIT
-Delhi research papers with the full facet-filter / sort / field-scope surface,
-returning matching papers, related faculty, and facet distributions.
+Wraps the SAME search-api the Explore page calls and replicates its client-side
+behaviour (sort dropdown, Group-by-Department, author drill-down), so the papers
+the tool returns are the same list, in the same order, the user would see on
+Explore for the same query + filters (truncated to the top 10).
+
+Explore's visible controls are client-side transforms of a server relevance
+page: the "Sort by" dropdown re-sorts the fetched page (relevance | citations),
+"Group by Dept" groups it by field, and clicking a professor runs an
+author-scoped search. This tool mirrors all three.
 """
 
 from __future__ import annotations
@@ -10,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from typing import Optional
 
 from langchain_core.tools import BaseTool, tool
@@ -21,43 +28,142 @@ from agent.transports.research_search import ResearchSearchClient
 
 logger = logging.getLogger(__name__)
 
-_PER_PAGE = 10
-_SORTS = {"relevance", "date", "citations", "impact", "normalized"}
-_SEARCH_IN = {"title", "abstract", "author", "subject_area", "field"}
+# Explore loads 20 results per page and applies its client-side sort/group to
+# that page; the top 10 of that is what the user sees first. We fetch the same
+# window, apply the same transforms, and return the top 10.
+_FETCH_PAGE = 20
+_RETURN = 10
+_SORTS = {"relevance", "citations"}
 
-# The People list: faculty aggregated across ALL matching papers, returned as a
-# flat top-N ranked by matching-paper count (department shown on each entry).
 _MAX_FACULTY = 10
 _MAX_DEPT_TOTALS = 6
 
 
-async def _build_faculty_sections(people: dict, faculty_repo) -> dict:
-    """Flatten the faculty-for-query aggregation into the top faculty by
-    matching-paper count, each tagged with their department, plus per-department
-    totals. All counts span the whole result set, not the returned page."""
-    depts = people.get("departments") or []
+def _name_tokens(name: str) -> list[str]:
+    return [t for t in re.split(r"\s+", (name or "").strip()) if t]
 
+
+async def _resolve_author(faculty_repo, name: str) -> tuple[Optional[str], Optional[str]]:
+    """Resolve a professor's name to their Scopus author_id (+ canonical name)
+    so we can run the author-scoped search."""
+    toks = _name_tokens(name)
+    if not toks:
+        return None, None
+    try:
+        docs = await faculty_repo.compound_name_search(toks, limit=3)
+    except Exception as exc:
+        logger.warning("author name resolution failed: %s", exc)
+        return None, None
+    for d in docs:
+        sc = d.get("scopus_id")
+        scopus = sc[0] if isinstance(sc, list) and sc else (sc if isinstance(sc, str) else None)
+        if scopus:
+            full = " ".join(
+                x for x in (d.get("title"), d.get("firstName"), d.get("lastName")) if x
+            ).strip() or name
+            return str(scopus), full
+    return None, None
+
+
+_TITLES = frozenset({"prof", "professor", "dr", "mr", "ms", "mrs", "the"})
+
+
+def _clean_tokens(name: str) -> set[str]:
+    return {t for t in re.split(r"[^a-z0-9]+", (name or "").lower()) if t and t not in _TITLES}
+
+
+def _match_faculty_author_id(people: dict, name: str) -> Optional[str]:
+    """Find this professor in the faculty-for-query People list and return the
+    author_id the People sidebar uses — so the deep-link highlights (blues) the
+    professor exactly like a click. Requires a strong name match to avoid picking
+    a different person with the same surname."""
+    want = _clean_tokens(name)
+    if not want:
+        return None
+    best_id, best_score = None, 0.0
+    for d in people.get("departments", []) or []:
+        for f in d.get("faculty", []) or []:
+            fn = _clean_tokens(f.get("name", ""))
+            if not fn:
+                continue
+            score = len(want & fn) / len(want | fn)
+            if score > best_score:
+                best_score, best_id = score, f.get("author_id")
+    return best_id if best_score >= 0.5 else None
+
+
+def _client_sort(results: list[dict], sort_mode: str) -> list[dict]:
+    """Explore's client-side sort of the fetched page: citations = by citation
+    count desc; relevance = keep the server order."""
+    if sort_mode == "citations":
+        return sorted(results, key=lambda p: p.get("citation_count", 0) or 0, reverse=True)
+    return results
+
+
+def _author_names(authors: list, limit: int = 3) -> list[str]:
+    names: list[str] = []
+    for a in authors or []:
+        n = (a.get("author_name") or a.get("name")) if isinstance(a, dict) else a
+        if n:
+            names.append(n)
+        if len(names) >= limit:
+            break
+    return names
+
+
+def _shape_paper(p: dict, i: int) -> dict:
+    return {
+        "citation_index": i + 1,
+        "id": p.get("_id") or p.get("open_search_id", ""),
+        "title": p.get("title", ""),
+        "authors": _author_names(p.get("authors", [])),
+        "year": p.get("publication_year"),
+        "document_type": p.get("document_type"),
+        "field": p.get("field_associated"),
+        "citations": p.get("citation_count", 0),
+        "link": p.get("link"),
+        "document_scopus_id": p.get("document_scopus_id"),
+        "document_eid": p.get("document_eid"),
+        "kerberos": p.get("kerberos"),
+    }
+
+
+def _group_by_department(papers: list[dict]) -> list[dict]:
+    """Mirror Explore's Group-by-Dept: bucket the returned papers by field,
+    departments alphabetical with 'Other' last. References papers by their
+    `citation_index` (not full copies) so the flat `papers` list always keeps
+    all 10 and the payload stays small."""
+    groups: dict[str, list[int]] = {}
+    for p in papers:
+        dept = p.get("field") or "Other"
+        groups.setdefault(dept, []).append(p.get("citation_index"))
+    ordered = sorted(groups.keys(), key=lambda d: (d == "Other", d.lower()))
+    return [{"department": d, "paper_indexes": groups[d]} for d in ordered]
+
+
+async def _build_faculty_sections(people: dict, faculty_repo) -> dict:
+    """The Explore People sidebar: top faculty by matching-paper count (across
+    the WHOLE result set), each tagged with department, plus per-dept totals."""
+    depts = people.get("departments") or []
     flat: list[dict] = []
     for d in depts:
-        dept_name = d.get("name")
         for f in d.get("faculty", []) or []:
             flat.append({
                 "name": f.get("name"),
                 "papers": f.get("paper_count", 0),
-                "department": dept_name,
+                "department": d.get("name"),
                 "author_id": f.get("author_id"),
             })
     flat.sort(key=lambda f: f.get("papers", 0), reverse=True)
     top = flat[:_MAX_FACULTY]
 
-    # Resolve Scopus author_id -> faculty record so names can link to profiles.
     expert_ids = [f["author_id"] for f in top if f.get("author_id")]
     by_expert: dict = {}
     if expert_ids:
         try:
             docs = await faculty_repo.find_by_expert_ids(expert_ids)
             by_expert = {d.get("expert_id"): d for d in docs}
-        except Exception as exc:  # profile links are a nicety, never fatal
+        except Exception as exc:
             logger.warning("faculty profile resolution failed: %s", exc)
 
     top_faculty = []
@@ -73,12 +179,9 @@ async def _build_faculty_sections(people: dict, faculty_repo) -> dict:
         })
 
     dept_totals = sorted(
-        (
-            {"department": d.get("name"), "papers": d.get("total_paper_count", 0)}
-            for d in depts if d.get("name")
-        ),
-        key=lambda d: d["papers"],
-        reverse=True,
+        ({"department": d.get("name"), "papers": d.get("total_paper_count", 0)}
+         for d in depts if d.get("name")),
+        key=lambda d: d["papers"], reverse=True,
     )[:_MAX_DEPT_TOTALS]
 
     return {
@@ -86,39 +189,12 @@ async def _build_faculty_sections(people: dict, faculty_repo) -> dict:
         "total_matching_papers": people.get("total_matching_papers"),
         "showing": len(top_faculty),
         "note": (
-            "Paper counts are across ALL matching papers for this query, not just "
-            "the papers listed above. top_faculty is the overall top "
-            f"{_MAX_FACULTY} researchers ranked by matching papers."
+            "Paper counts span ALL matching papers, not just the papers listed. "
+            f"top_faculty is the overall top {_MAX_FACULTY} researchers by matching papers."
         ),
         "top_faculty": top_faculty,
         "papers_by_department": dept_totals,
     }
-
-
-class SearchResearchArgs(BaseModel):
-    query: str = Field(description="The research topic, keywords, or a faculty/author name to search for.")
-    year_from: Optional[int] = Field(default=None, description="Only papers published in or after this year.")
-    year_to: Optional[int] = Field(default=None, description="Only papers published in or before this year.")
-    document_types: Optional[list[str]] = Field(default=None, description="Restrict to document types, e.g. ['Article','Review','Conference Paper'].")
-    subject_areas: Optional[list[str]] = Field(default=None, description="Restrict to Scopus subject-area labels.")
-    sort: Optional[str] = Field(default=None, description="One of: relevance (default), date (newest), citations (most cited), impact (citation-weighted).")
-    search_in: Optional[list[str]] = Field(default=None, description="Restrict matching to these fields only: title, abstract, author, subject_area, field. Use ['author'] to search by a person's name.")
-    first_author_only: Optional[bool] = Field(default=None, description="Only papers where the matched IITD author is the first author.")
-    interdisciplinary: Optional[bool] = Field(default=None, description="Only papers spanning 3+ subject areas.")
-
-
-def _author_names(authors: list, limit: int = 3) -> list[str]:
-    names: list[str] = []
-    for a in authors or []:
-        if isinstance(a, dict):
-            n = a.get("author_name") or a.get("name")
-        else:
-            n = a
-        if n:
-            names.append(n)
-        if len(names) >= limit:
-            break
-    return names
 
 
 def _facet_summary(facets: dict) -> dict:
@@ -130,10 +206,18 @@ def _facet_summary(facets: dict) -> dict:
         if isinstance(buckets, list) and buckets:
             out[key] = [
                 {"value": b.get("key"), "count": b.get("doc_count", b.get("count"))}
-                for b in buckets[:6]
-                if isinstance(b, dict)
+                for b in buckets[:6] if isinstance(b, dict)
             ]
     return out
+
+
+class SearchResearchArgs(BaseModel):
+    query: str = Field(description="The research topic or keywords to search for.")
+    year_from: Optional[int] = Field(default=None, description="Only papers published in or after this year.")
+    year_to: Optional[int] = Field(default=None, description="Only papers published in or before this year.")
+    sort: Optional[str] = Field(default=None, description="The Explore 'Sort by' control: 'relevance' (default) or 'citations' (most-cited first among the results).")
+    group_by_department: Optional[bool] = Field(default=None, description="Explore's 'Group by Dept': group the returned papers by their field/department. Ignored when `author` is set.")
+    author: Optional[str] = Field(default=None, description="A professor's name to drill into: return only THAT professor's papers matching the query (Explore's click-a-professor view). When set, the People list is omitted.")
 
 
 def build_tool(deps: ToolDeps) -> BaseTool:
@@ -146,144 +230,143 @@ def build_tool(deps: ToolDeps) -> BaseTool:
         query: str,
         year_from: Optional[int] = None,
         year_to: Optional[int] = None,
-        document_types: Optional[list[str]] = None,
-        subject_areas: Optional[list[str]] = None,
         sort: Optional[str] = None,
-        search_in: Optional[list[str]] = None,
-        first_author_only: Optional[bool] = None,
-        interdisciplinary: Optional[bool] = None,
+        group_by_department: Optional[bool] = None,
+        author: Optional[str] = None,
     ) -> str:
-        """Search IIT Delhi research PAPERS — the primary tool for any question
-        about publications, research topics, or which professors work on a
-        subject. This is the same hybrid (keyword + semantic) engine as the
-        Explore page, so it understands meaning, not just exact words.
+        """Search IIT Delhi research PAPERS — the primary tool for publications,
+        research topics, and which researchers work on a subject. Same hybrid
+        (keyword + semantic) engine as the Explore page: the papers returned are
+        the SAME list, in the SAME order, a user would see on Explore for this
+        query + filters (top 10).
 
-        Use it for: "papers on perovskite solar cells", "what has Prof X
-        published about Y" (put the name in `query` and add search_in=['author']
-        or just include the name), "recent reviews on graphene since 2020",
-        "most-cited papers on drug delivery", "who works on wearable
-        electronics" (answer that from the `faculty` section).
-
-        Honor the user's constraints with the knobs:
-          - year_from / year_to for date ranges.
-          - sort: 'citations' for "most cited", 'date' for "latest/recent",
-            else leave default (relevance).
-          - document_types (['Review'], ['Conference Paper'], ...).
-          - search_in=['author'] to search specifically by a person's name;
-            ['title'] / ['abstract'] to restrict where the keywords must appear.
-          - first_author_only / interdisciplinary flags.
+        Explore's filters, all supported here:
+          - `sort`: 'relevance' (default) or 'citations' (most-cited among the
+            results) — this mirrors Explore's Sort-by dropdown.
+          - `year_from` / `year_to`: publication-year range.
+          - `group_by_department`: group the returned papers by field/department.
+          - `author`: a professor's NAME to drill into — returns only that
+            professor's papers matching the query (Explore's click-a-professor
+            view). When set, the People list is omitted and grouping does not
+            apply.
 
         There is NO department filter for papers. For "papers of the <X>
-        department on <topic>", search the TOPIC only (do not try to filter by
-        department) and then read `faculty.top_faculty` — each entry carries the
-        researcher's department. Never claim a filter you did not apply.
+        department on <topic>", search the TOPIC and read `faculty.top_faculty`
+        (each entry has a department). Never claim a filter you didn't apply.
 
         Returns:
           - `papers` — the top 10 matching papers (title, authors, year,
-            citations, link).
-          - `faculty` — the People list. `top_faculty` is the top 10 researchers
-            ranked by how many matching papers they have, each with their
-            `department`; `papers_by_department` gives per-department totals;
-            `total_faculty` is how many researchers matched overall. ALL these
-            counts cover the ENTIRE result set, not just the 10 papers above —
-            use them for "who works on X" and "which department leads on X".
+            citations, link), same order as Explore. When group_by_department
+            is on, an extra `papers_grouped` lists each department with the
+            `paper_indexes` (into `papers`) that belong to it.
+          - `faculty` — the People list (`top_faculty` = top researchers by
+            matching papers across the WHOLE result set, `papers_by_department`
+            = per-dept totals). OMITTED when `author` is set.
           - `facets` — year/type/field distributions.
+        A button to open this exact search on Explore is added automatically.
         Do NOT use this for patents/IP — use search_ip."""
+        sort_mode = sort if sort in _SORTS else "relevance"
         filters: dict = {}
         if year_from:
             filters["year_from"] = year_from
         if year_to:
             filters["year_to"] = year_to
-        if document_types:
-            filters["document_types"] = document_types
-        if subject_areas:
-            filters["subject_area"] = subject_areas
-        if first_author_only:
-            filters["first_author_only"] = True
-        if interdisciplinary:
-            filters["interdisciplinary"] = True
 
-        body: dict = {"query": query, "mode": "advanced", "per_page": _PER_PAGE}
-        body["sort"] = sort if sort in _SORTS else "relevance"
+        # Server sort is always relevance (Explore fetches the relevance page and
+        # sorts client-side); we replicate the client sort below.
+        body: dict = {"query": query, "mode": "advanced", "per_page": _FETCH_PAGE, "sort": "relevance"}
         if filters:
             body["filters"] = filters
-        if search_in:
-            valid = [f for f in search_in if f in _SEARCH_IN]
-            if valid:
-                body["search_in"] = valid
 
-        # Papers and the People aggregation run in parallel — the People list is
-        # built from the FULL matching corpus, so it must use the same filters.
+        author_id = author_name = None
+        people: dict | None = None
+
         try:
-            data, people = await asyncio.gather(
-                client.search(body),
-                client.faculty_for_query(
-                    query,
-                    mode="advanced",
-                    search_in=body.get("search_in"),
-                    filters=filters or None,
-                ),
-                return_exceptions=True,
-            )
+            if author:
+                author_id, author_name = await _resolve_author(faculty_repo, author)
+                if not author_id:
+                    return json.dumps({"papers": [], "error": f'Could not find a professor named "{author}".'})
+                # Prefer the author_id the People sidebar uses for this query, so
+                # the button highlights the professor exactly like a click does.
+                # (Author-scope resolves either id to the same faculty.)
+                try:
+                    sidebar_id = _match_faculty_author_id(
+                        await client.faculty_for_query(query, mode="advanced"),
+                        author_name or author,
+                    )
+                    if sidebar_id:
+                        author_id = sidebar_id
+                except Exception as exc:
+                    logger.warning("sidebar author-id lookup failed: %s", exc)
+                data = await client.author_scope({**body, "author_id": author_id})
+            else:
+                data, people_raw = await asyncio.gather(
+                    client.search(body),
+                    client.faculty_for_query(query, mode="advanced", filters=filters or None),
+                    return_exceptions=True,
+                )
+                if isinstance(data, BaseException):
+                    raise data
+                people = {} if isinstance(people_raw, BaseException) else people_raw
         except Exception as exc:
             logger.warning("search_research call failed: %s", exc)
             return json.dumps({"papers": [], "error": f"Search failed: {type(exc).__name__}"})
 
-        if isinstance(data, BaseException):
-            logger.warning("search_research paper search failed: %s", data)
-            return json.dumps({"papers": [], "error": f"Search failed: {type(data).__name__}"})
-        if isinstance(people, BaseException):
-            # The faculty sidebar is supplementary — never fail the whole search.
-            logger.warning("faculty-for-query failed: %s", people)
-            people = {}
-
-        results = data.get("results", []) or []
-        papers = []
-        for i, p in enumerate(results):
-            papers.append({
-                "citation_index": i + 1,
-                "id": p.get("_id") or p.get("open_search_id", ""),
-                "title": p.get("title", ""),
-                "authors": _author_names(p.get("authors", [])),
-                "year": p.get("publication_year"),
-                "document_type": p.get("document_type"),
-                "field": p.get("field_associated"),
-                "citations": p.get("citation_count", 0),
-                "link": p.get("link"),
-                "document_scopus_id": p.get("document_scopus_id"),
-                "document_eid": p.get("document_eid"),
-                "kerberos": p.get("kerberos"),
-            })
-
-        faculty_sections = await _build_faculty_sections(people or {}, faculty_repo)
+        # Replicate Explore's client-side sort, then take the first 10 shown.
+        results = _client_sort(data.get("results", []) or [], sort_mode)
+        top = [_shape_paper(p, i) for i, p in enumerate(results[:_RETURN])]
 
         pagination = data.get("pagination", {}) or {}
-        result = {
+        grouped = bool(group_by_department) and not author
+
+        result: dict = {
             "query": query,
-            "sorted_by": body["sort"],
-            "total_matching_papers": pagination.get("total", len(papers)),
-            "showing": len(papers),
-            "papers": papers,
-            "faculty": faculty_sections,
-            "facets": _facet_summary(data.get("facets", {})),
-            "suggestions": data.get("suggestions", [])[:5],
+            "sorted_by": ("similarity" if author else "relevance") if sort_mode == "relevance" else "citations",
+            "total_matching_papers": pagination.get("total", len(top)),
+            "showing": len(top),
         }
-        if not papers and data.get("message"):
+        if author:
+            result["author"] = {"name": author_name, "profile_hint": author}
+            result["note"] = f"Papers by {author_name} matching '{query}' (People list omitted for an author drill-down)."
+        if grouped:
+            result["papers_grouped"] = _group_by_department(top)
+            result["papers"] = top  # flat copy for source citations
+        else:
+            result["papers"] = top
+        if people is not None:
+            result["faculty"] = await _build_faculty_sections(people or {}, faculty_repo)
+        result["facets"] = _facet_summary(data.get("facets", {}))
+        if not top and data.get("message"):
             result["message"] = data["message"]
 
+        # Deep-link descriptor for the "Explore all results" button (same filters).
+        link_filters: dict = {}
+        if year_from:
+            link_filters["year_from"] = year_from
+        if year_to:
+            link_filters["year_to"] = year_to
+        result["explore_link"] = {
+            "kind": "research",
+            "query": query,
+            "sort": sort_mode,
+            "group_by_department": grouped,
+            "filters": link_filters or None,
+            "author": {"id": author_id, "name": author_name} if author_id else None,
+        }
+
         output = json.dumps(result, default=str)
-        # Shed papers first, then trailing department sections, so an oversized
-        # payload degrades gracefully instead of losing the faculty list wholesale.
-        while len(output) > cap and len(result["papers"]) > 3:
+        # Degrade gracefully if oversized: shed papers, then dept totals, then more papers.
+        def _papers_len() -> int:
+            return len(result.get("papers", []))
+
+        while len(output) > cap and _papers_len() > 3:
             result["papers"].pop()
-            result["showing"] = len(result["papers"])
+            if grouped:
+                result["papers_grouped"] = _group_by_department(result["papers"])
+            result["showing"] = _papers_len()
             output = json.dumps(result, default=str)
-        while len(output) > cap and len(result["faculty"].get("papers_by_department", [])) > 1:
+        while len(output) > cap and isinstance(result.get("faculty"), dict) and len(result["faculty"].get("papers_by_department", [])) > 1:
             result["faculty"]["papers_by_department"].pop()
-            output = json.dumps(result, default=str)
-        while len(output) > cap and result["papers"]:
-            result["papers"].pop()
-            result["showing"] = len(result["papers"])
             output = json.dumps(result, default=str)
         return output
 

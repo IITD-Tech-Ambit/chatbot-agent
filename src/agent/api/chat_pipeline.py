@@ -296,7 +296,10 @@ async def _agent_stream(
                     step=label, detail=None
                 ).model_dump())
 
-                if name in ("search_research", "search_ip") and not explore_emitted:
+                # search_ip's button comes from its args here; search_research's
+                # comes from its OUTPUT (on_tool_end) because it carries resolved
+                # values (author id, client-side sort/group) not present in args.
+                if name == "search_ip" and not explore_emitted:
                     link = _build_explore_link(name, tool_input)
                     if link:
                         yield _sse("explore", link)
@@ -346,6 +349,20 @@ async def _agent_stream(
                         if ra_link:
                             yield _sse("explore", ra_link)
                             collected_explore = ra_link
+                            explore_emitted = True
+
+                    if name == "search_research" and not explore_emitted:
+                        link = data.get("explore_link") if isinstance(data, dict) else None
+                        if isinstance(link, dict) and link.get("query"):
+                            yield _sse("explore", link)
+                            collected_explore = link
+                            explore_emitted = True
+
+                    if name == "list_department_faculty" and not explore_emitted:
+                        link = data.get("explore_link") if isinstance(data, dict) else None
+                        if isinstance(link, dict) and link.get("unit"):
+                            yield _sse("explore", link)
+                            collected_explore = link
                             explore_emitted = True
 
                 except (json.JSONDecodeError, AttributeError, TypeError):
