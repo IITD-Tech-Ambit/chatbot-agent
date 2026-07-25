@@ -28,7 +28,10 @@ PATTERNS: list[tuple[re.Pattern, str]] = [  # type: ignore[type-arg]
     (re.compile(r"h[.\-\s]?index\s+(?:of|for)\s+(.+)", re.I), "get_h_index"),
     (re.compile(r"citation(?:s| count|count)?\s+(?:of|for)\s+(.+)", re.I), "get_citations"),
     (re.compile(
+        r"(?:faculty|professors?)\s+(?:in|from)\s+(.+?)(?:\s+dept(?:artment)?)?\s*$",
+
         r"^\s*(?:faculty|professors?)\s+(?:in|from)\s+(.+?)(?:\s+(?:dept|department))?\s*\??\s*$",
+
         re.I,
     ), "get_faculty_by_dept"),
     (re.compile(r"papers?\s+by\s+(.+)", re.I), "get_papers_by_author"),
