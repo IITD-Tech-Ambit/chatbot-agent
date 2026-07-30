@@ -28,11 +28,13 @@ _DIRECTORY_CATEGORIES = [("departments", "Departments"), ("centres", "Centres"),
 # unreachable at startup.
 _FALLBACK_CATEGORY = {"Departments": "Department", "Centres": "Centre", "Schools": "School"}
 
-# Current Heads of Department (departments only — centres/schools have none),
-# with the HoD's kerberos for a profile link. Mirrors the Directory page's
-# hardcoded DEPT_HODS map (tech-ambit-explorer DepartmentGroupAccordionItem.tsx);
-# not in the DB, so kept in sync by hand.
-_DEPT_HODS: dict[str, tuple[str, str]] = {
+# Current head of each academic unit — departments (labelled "HoD") AND
+# centres/schools (labelled "Head") — with the head's kerberos for a profile
+# link. Mirrors the Directory page's hardcoded DEPT_HODS map
+# (tech-ambit-explorer DepartmentGroupAccordionItem.tsx); not in the DB (the
+# /directory/grouped payload carries no head field), so kept in sync by hand.
+_UNIT_HEADS: dict[str, tuple[str, str]] = {
+    # Departments
     "Applied Mechanics": ("Sawan S. Sinha", "sawan"),
     "Biochemical Engineering & Biotechnology": ("Preeti Srivastava", "preeti"),
     "Chemical Engineering": ("Anurag S. Rathore", "arathore"),
@@ -49,7 +51,29 @@ _DEPT_HODS: dict[str, tuple[str, str]] = {
     "Mechanical Engineering": ("Subbarao P M V", "pmvs"),
     "Physics Department": ("Sujeet Chaudhary", "sujeetc"),
     "Textile & Fibre Engineering": ("Deepti Gupta", "deepti"),
+    # Schools
+    "Amar Nath and Shashi Khosla School of Information Technology": ("Srikanta Bedathur", "srikanta"),
+    "Bharti School of Telecommunication Technology and Management": ("Manav R. Bhatnagar", "manav"),
+    "Kusuma School of Biological Sciences": ("Vivekanandan Perumal", "vperumal"),
+    "School of Artificial Intelligence": ("Parag Singla", "parags"),
+    "School of Interdisciplinary Research": ("B. Premachandran", "prem"),
+    "School of Public Policy": ("Ambuj D. Sagar", "asagar"),
+    # Centres
+    "Centre for Applied Research in Electronics": ("Samaresh Das", "samareshdas"),
+    "Centre for Atmospheric Sciences": ("Sagnik Dey", "sagnik"),
+    "Centre for Automotive Research and Tribology": ("Santanu Kumar Mishra", "skmishra"),
+    "Centre for Biomedical Engineering": ("Tapan K. Gandhi", "tgandhi"),
+    "Centre for Rural Development and Technology": ("Vivek Kumar", "vivekk"),
+    "Centre for Sensors, Instrumentation and Cyber Physical System Engineering (SeNSE)": ("Kedar Khare", "kedark"),
+    "Computer Centre": ("Smruti Ranjan Sarangi", "srsarangi"),
+    "Educational Technology Services Centre": ("Sourabh B. Paul", "sbpaul"),
+    "National Resource Centre for Value Education in Engineering": ("James Gomes", "jgomes"),
+    "Optics and Photonics Centre": ("Kedar Khare", "kedark"),
+    "Transportation Research and Injury Prevention Programme (TRIPP)": ("Girish Agrawal", "girish"),
 }
+
+# Directory label for the unit's head: departments say "HoD", schools/centres say "Head".
+_HEAD_LABEL = {"Departments": "HoD", "Centres": "Head", "Schools": "Head"}
 
 
 async def _fetch_directory_units(base_url: str) -> dict[str, list[str]]:
@@ -142,21 +166,21 @@ async def build_static_reference(db, backend_url: str | None = None) -> str:
         "These three lists are complete. Do NOT add any other unit, and do not "
         "mention research labs or administrative offices as academic units."
     )
+    # Every unit — departments, centres, AND schools — carries its current head
+    # (departments call it "HoD", centres/schools call it "Head"), exactly as the
+    # Directory page shows for each category.
     for _, label in _DIRECTORY_CATEGORIES:
         names = units.get(label) or []
         if not names:
             continue
-        if label == "Departments":
-            # Departments carry their current Head of Department.
-            lines.append(f"- **Departments** ({len(names)}) — with current Head of Department (HoD):")
-            for nm in names:
-                hod = _DEPT_HODS.get(nm)
-                if hod and hod[0]:
-                    who = f"[{hod[0]}](/faculty/{hod[1]})" if hod[1] else hod[0]
-                    lines.append(f"  - {nm} — HoD: {who}")
-                else:
-                    lines.append(f"  - {nm}")
-        else:
-            lines.append(f"- **{label}** ({len(names)}): " + ", ".join(names))
+        head_label = _HEAD_LABEL.get(label, "Head")
+        lines.append(f"- **{label}** ({len(names)}) — with current {head_label}:")
+        for nm in names:
+            head = _UNIT_HEADS.get(nm)
+            if head and head[0]:
+                who = f"[{head[0]}](/faculty/{head[1]})" if head[1] else head[0]
+                lines.append(f"  - {nm} — {head_label}: {who}")
+            else:
+                lines.append(f"  - {nm}")
 
     return "\n".join(lines)
