@@ -22,8 +22,13 @@ from agent.transports.taxonomy import TaxonomyClient
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_LIMIT = 15
-_MAX_LIMIT = 40
+# Every browseable list the bot returns is capped at 10 — a representative
+# subset; the auto-added Research Areas button is how the user sees the full
+# list on the page. Keep this in lockstep with the other list tools
+# (list_department_faculty._RETURN, search_research._RETURN/_MAX_FACULTY,
+# search_ip._PER_PAGE).
+_DEFAULT_LIMIT = 10
+_MAX_LIMIT = 10
 
 
 class ExpertsByResearchAreaArgs(BaseModel):
@@ -40,7 +45,7 @@ class ExpertsByResearchAreaArgs(BaseModel):
     )
     limit: Optional[int] = Field(
         default=None,
-        description="How many experts to return (default 15, max 40).",
+        description="How many experts to return (default 10, capped at 10 — the full list is on the Research Areas page via the button).",
     )
 
 

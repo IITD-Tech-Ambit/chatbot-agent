@@ -5,15 +5,16 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "chatbot-agent"
 version = "1.0.0"
-description = "Agentic RAG chatbot for IIT Delhi research portal — LangGraph + Llama 3.3 70B via Groq"
+description = "Agentic RAG chatbot for IIT Delhi research portal — LangGraph + Claude Haiku 4.5 via Anthropic"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.30.0",
     "langgraph>=0.4.0",
     "langchain>=0.3.0",
-    "langchain-openai>=0.3.0",
+    "langchain-anthropic>=0.3.0",
     "langchain-core>=0.3.0",
+    "anthropic>=0.40.0",
     "motor>=3.6.0",
     "opensearch-py>=2.7.0",
     "redis>=5.0.0",

@@ -23,8 +23,8 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Startup: connect to all backends, build graph. Shutdown: close connections."""
 
-    if not settings.GROQ_API_KEY:
-        raise RuntimeError("GROQ_API_KEY is required but not set — cannot start without an xAI API key")
+    if not settings.ANTHROPIC_API_KEY:
+        raise RuntimeError("ANTHROPIC_API_KEY is required but not set — cannot start without an Anthropic API key")
 
     from agent.data import mongo, opensearch, redis as redis_mod
 
@@ -101,16 +101,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     )
     app.state.embedding_client = embedding_client
 
-    if settings.GROQ_API_KEY:
+    if settings.ANTHROPIC_API_KEY:
         query_parser = QueryParser(
-            api_key=settings.GROQ_API_KEY,
-            model=settings.GROQ_EXTRACT_MODEL,
+            api_key=settings.ANTHROPIC_API_KEY,
+            model=settings.ANTHROPIC_EXTRACT_MODEL,
             proxy_url=settings.LLM_HTTP_PROXY_URL or None,
         )
     else:
         query_parser = None
         logger.warning(
-            "GROQ_API_KEY not set — QueryParser disabled; faculty/dept kerberos filtering will not work"
+            "ANTHROPIC_API_KEY not set — QueryParser disabled; faculty/dept kerberos filtering will not work"
         )
 
     retriever = Retriever(
@@ -170,17 +170,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     tools = build_tools(tool_deps)
     app.state.tools = tools
 
-    from agent.llm.groq_client import make_tool_llm, make_answer_llm
+    from agent.llm.anthropic_client import make_tool_llm, make_answer_llm
 
     tool_llm = make_tool_llm(
-        api_key=settings.GROQ_API_KEY,
-        model=settings.GROQ_MODEL,
+        api_key=settings.ANTHROPIC_API_KEY,
+        model=settings.ANTHROPIC_MODEL,
         max_tokens=settings.MAX_ANSWER_TOKENS,
         proxy_url=settings.LLM_HTTP_PROXY_URL or None,
     )
     answer_llm = make_answer_llm(
-        api_key=settings.GROQ_API_KEY,
-        model=settings.GROQ_MODEL,
+        api_key=settings.ANTHROPIC_API_KEY,
+        model=settings.ANTHROPIC_MODEL,
         max_tokens=settings.MAX_ANSWER_TOKENS,
         proxy_url=settings.LLM_HTTP_PROXY_URL or None,
     )
@@ -205,8 +205,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         grpc_server = await start_grpc_server(app.state.quota_store, settings.GRPC_PORT)
 
     logger.info(
-        "Chatbot agent started on http://%s:%s (model: %s via xAI)",
-        settings.HOST, settings.PORT, settings.GROQ_MODEL,
+        "Chatbot agent started on http://%s:%s (model: %s via Anthropic)",
+        settings.HOST, settings.PORT, settings.ANTHROPIC_MODEL,
     )
     yield
 

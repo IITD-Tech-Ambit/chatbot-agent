@@ -89,32 +89,79 @@ class TestFindFacultyForTopic:
 
 
 class TestGetFacultyProfile:
+    """get_faculty_profile resolves a name via the Directory search (top result)
+    and assembles the profile from the /profile + /research-summary + IP-search
+    endpoints, so the HTTP calls are mocked with respx (no live infra)."""
+
+    @staticmethod
+    def _mock_directory(respx, httpx, *, faculties, summary=None, ip=None):
+        respx.get(url__regex=r".*/api/directory/search.*").mock(
+            return_value=httpx.Response(200, json={"data": {"faculties": faculties}})
+        )
+        respx.get(url__regex=r".*/api/directory/faculty/[^/]+/profile$").mock(
+            return_value=httpx.Response(200, json={"data": (faculties[0] if faculties else {})})
+        )
+        respx.get(url__regex=r".*/api/directory/faculty/[^/]+/research-summary.*").mock(
+            return_value=httpx.Response(200, json={"data": summary or {"stats": {"totalPapers": 0}, "timeline": []}})
+        )
+        respx.post(url__regex=r".*/api/v1/ip/search.*").mock(
+            return_value=httpx.Response(200, json=ip or {"results": [], "pagination": {"total": 0}})
+        )
+
     @pytest.mark.asyncio
     async def test_valid_name(self, tool_deps):
+        import httpx
+        import respx
         from agent.tools.faculty_profile import build_tool
 
+        faculty = {
+            "name": "Prof Amit Kumar", "email": "amitkumar@iitd.ac.in",
+            "hIndex": 25, "citationCount": 3000, "research_areas": ["Machine Learning"],
+            "scopusId": "SCOP001", "googleScholarId": "GS1",
+            "designation": "Professor", "workingFromYear": 2018,
+            "department": {"name": "Computer Science", "code": "cse", "category": "Department"},
+        }
+        summary = {"stats": {"totalPapers": 42, "totalYears": 6}, "timeline": [
+            {"year": 2024, "count": 2, "papers": [
+                {"title": "Paper A", "type": "Article", "citations": 10, "link": "a"},
+                {"title": "Paper B", "type": "Article", "citations": 5, "link": "b"},
+            ]},
+        ]}
         tool = build_tool(tool_deps)
-        result = await tool.ainvoke({"name": "Amit Kumar"})
+        with respx.mock:
+            self._mock_directory(respx, httpx, faculties=[faculty], summary=summary)
+            result = await tool.ainvoke({"name": "Amit Kumar"})
         data = json.loads(result)
-        assert "profile" in data
-        assert data["profile"]["name"] == "Prof. Amit Kumar"
+        assert data["resolved_from_query"] == "Amit Kumar"
+        assert data["profile"]["name"] == "Prof Amit Kumar"
         assert data["profile"]["email"] == "amitkumar@iitd.ac.in"
-
-    @pytest.mark.asyncio
-    async def test_meta_name_rejected(self, tool_deps):
-        from agent.tools.faculty_profile import build_tool
-
-        tool = build_tool(tool_deps)
-        result = await tool.ainvoke({"name": "yourself"})
-        data = json.loads(result)
-        assert "error" in data
+        assert data["profile"]["kerberos"] == "amitkumar"
+        assert data["profile"]["profile_url"] == "/faculty/amitkumar"
+        assert data["profile"]["h_index"] == 25
+        assert data["papers"]["total"] == 42
+        assert len(data["papers"]["latest"]) == 2
+        assert data["papers"]["latest"][0]["title"] == "Paper A"
 
     @pytest.mark.asyncio
     async def test_unknown_name(self, tool_deps):
+        import httpx
+        import respx
         from agent.tools.faculty_profile import build_tool
 
         tool = build_tool(tool_deps)
-        result = await tool.ainvoke({"name": "Nonexistent Person"})
+        with respx.mock:
+            self._mock_directory(respx, httpx, faculties=[])
+            result = await tool.ainvoke({"name": "Nonexistent Person"})
+        data = json.loads(result)
+        assert "error" in data
+        assert not data.get("profile")
+
+    @pytest.mark.asyncio
+    async def test_blank_name(self, tool_deps):
+        from agent.tools.faculty_profile import build_tool
+
+        tool = build_tool(tool_deps)
+        result = await tool.ainvoke({"name": "   "})
         data = json.loads(result)
         assert "error" in data
 

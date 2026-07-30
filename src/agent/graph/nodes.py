@@ -45,7 +45,16 @@ def make_answer_node(
 
     async def answer_node(state: AgentState, config: RunnableConfig | None = None) -> dict[str, Any]:
         """Generate the final grounded answer. Budget-guard truncates context first."""
-        messages = _enforce_context_budget(state["messages"], caps)
+        msgs = list(state["messages"])
+        # The agent node's last message is a tool-selection artifact. When it has
+        # no tool_calls (route sent us here), some models leave it empty while
+        # Claude answers the user directly in that step. Either way, drop it: the
+        # tagged answer LLM must regenerate the (streamed) final answer from clean
+        # context — feeding Claude a transcript that already ends with a complete
+        # assistant answer makes it emit an empty follow-up turn (0-char answer).
+        if msgs and isinstance(msgs[-1], AIMessage) and not getattr(msgs[-1], "tool_calls", None):
+            msgs = msgs[:-1]
+        messages = _enforce_context_budget(msgs, caps)
         response = await answer_llm.ainvoke(messages)
         return {"messages": [response]}
 

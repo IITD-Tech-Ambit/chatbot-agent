@@ -1,7 +1,7 @@
 """LLM-based query parser for extracting faculty name and department.
 
-Uses a cheap xAI model (grok-3-mini) with JSON-mode to robustly identify
-structured fields in natural language queries like:
+Uses a cheap Claude model (Haiku 4.5) to robustly identify structured fields in
+natural language queries like:
   "papers by Bhim Singh from Electrical Engineering on bridge converter"
   "Apurba Das (Textile & Fibre Engineering) publications"
   "Papers from Computer Science & Engineering on what news"
@@ -20,8 +20,21 @@ from agent import metrics as _metrics
 
 logger = logging.getLogger(__name__)
 
-_XAI_BASE_URL = "https://api.x.ai/v1"
 _MAX_CACHE = 512
+
+
+def _extract_json(text: str) -> dict:
+    """Parse the first JSON object out of an LLM reply (Anthropic has no JSON
+    mode, and may wrap the object in prose or a ```json fence)."""
+    if not text:
+        return {}
+    start, end = text.find("{"), text.rfind("}")
+    if start == -1 or end == -1 or end < start:
+        return {}
+    try:
+        return json.loads(text[start : end + 1])
+    except json.JSONDecodeError:
+        return {}
 
 _SYSTEM_PROMPT = """\
 You are a query parser for the IIT Delhi research portal.
@@ -59,7 +72,7 @@ _NULL = ParsedQuery(faculty_name=None, departments=())
 
 
 class QueryParser:
-    """Async query parser backed by a cheap xAI model.
+    """Async query parser backed by a cheap Claude model.
 
     Pass an instance to Retriever so kerberos resolution uses LLM extraction
     instead of brittle regex patterns.
@@ -68,17 +81,17 @@ class QueryParser:
     def __init__(
         self,
         api_key: str,
-        model: str = "grok-3-mini",
+        model: str = "claude-haiku-4-5-20251001",
         proxy_url: str | None = None,
     ) -> None:
         import httpx
-        from openai import AsyncOpenAI
+        from anthropic import AsyncAnthropic
 
         # Explicit LLM_HTTP_PROXY_URL, not the generic HTTP_PROXY/HTTPS_PROXY
-        # env vars — see agent.llm.groq_client for why (container-wide env
+        # env vars — see agent.llm.anthropic_client for why (container-wide env
         # leaking into e.g. this image's own urllib-based HEALTHCHECK).
-        http_client = httpx.AsyncClient(proxy=proxy_url, trust_env=False)
-        self._client = AsyncOpenAI(api_key=api_key, base_url=_XAI_BASE_URL, http_client=http_client)
+        http_client = httpx.AsyncClient(proxy=proxy_url or None, trust_env=False)
+        self._client = AsyncAnthropic(api_key=api_key, http_client=http_client)
         self._model = model
         self._cache: dict[str, ParsedQuery] = {}
 
@@ -99,20 +112,17 @@ class QueryParser:
     async def _call(self, query: str) -> ParsedQuery:
         t_start = time.perf_counter()
         try:
-            resp = await self._client.chat.completions.create(
+            resp = await self._client.messages.create(
                 model=self._model,
-                messages=[
-                    {"role": "system", "content": _SYSTEM_PROMPT},
-                    {"role": "user", "content": query},
-                ],
-                response_format={"type": "json_object"},
+                system=_SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": query}],
                 temperature=0,
-                max_tokens=64,
+                max_tokens=128,
             )
             _metrics.CHATBOT_QUERY_PARSER_REQUESTS_TOTAL.labels(outcome="success").inc()
             _metrics.CHATBOT_QUERY_PARSER_DURATION_SECONDS.observe(time.perf_counter() - t_start)
-            raw = resp.choices[0].message.content or "{}"
-            data = json.loads(raw)
+            raw = resp.content[0].text if resp.content else ""
+            data = _extract_json(raw)
             raw_depts = data.get("departments") or []
             if isinstance(raw_depts, str):
                 raw_depts = [raw_depts]

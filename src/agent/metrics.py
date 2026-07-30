@@ -49,13 +49,13 @@ CHATBOT_CHAT_DURATION_SECONDS = Histogram(
 
 CHATBOT_QUERY_PARSER_REQUESTS_TOTAL = Counter(
     "chatbot_query_parser_requests_total",
-    "Total xAI grok-mini query-parser calls by outcome",
+    "Total Claude Haiku query-parser calls by outcome",
     labelnames=("outcome",),  # outcome: success|error|cache_hit
 )
 
 CHATBOT_QUERY_PARSER_DURATION_SECONDS = Histogram(
     "chatbot_query_parser_duration_seconds",
-    "Latency of xAI grok-mini query-parser API calls (seconds)",
+    "Latency of Claude Haiku query-parser API calls (seconds)",
     buckets=(0.05, 0.1, 0.25, 0.5, 1, 2, 5),
 )
 

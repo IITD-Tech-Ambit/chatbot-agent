@@ -87,17 +87,19 @@ class Settings(BaseSettings):
     CHAT_QUOTA_LIMITED_CATEGORIES: str = "student"
     CHAT_QUOTA_WHITELIST_KERBEROS: str = ""
 
-    GROQ_API_KEY: str = ""
-    GROQ_MODEL: str = "grok-4.3"
-    GROQ_EXTRACT_MODEL: str = "grok-3-mini"  # cheap model for query parsing
+    # Anthropic Claude LLM (Haiku 4.5). Tool selection + final answer + the cheap
+    # query parser all run on Claude via the Anthropic API.
+    ANTHROPIC_API_KEY: str = ""
+    ANTHROPIC_MODEL: str = "claude-haiku-4-5-20251001"
+    ANTHROPIC_EXTRACT_MODEL: str = "claude-haiku-4-5-20251001"  # cheap model for query parsing
     MAX_ANSWER_TOKENS: int = 1024
 
-    # Outbound calls to api.x.ai need the campus proxy to reach the internet.
+    # Outbound calls to api.anthropic.com need the campus proxy to reach the internet.
     # Deliberately NOT the generic HTTP_PROXY/HTTPS_PROXY env vars: those are
     # container-wide, so anything else in the container that also auto-honors
     # them (e.g. Python's urllib, used by this image's own HEALTHCHECK to hit
     # its own /health over loopback) would try to route through the proxy
-    # too. See src/agent/llm/groq_client.py and src/agent/rag/query_parser.py.
+    # too. See src/agent/llm/anthropic_client.py and src/agent/rag/query_parser.py.
     LLM_HTTP_PROXY_URL: str = ""
 
     # Two rounds let the agent chain lookup_ipc_classification → search_ips /
@@ -115,7 +117,7 @@ class Settings(BaseSettings):
 
     # Per-tool output token caps (approximate char counts; 1 token ≈ 4 chars)
     TOKEN_CAP_SEARCH_PAPERS: int = 8000
-    TOKEN_CAP_FACULTY_PROFILE: int = 2000
+    TOKEN_CAP_FACULTY_PROFILE: int = 3500  # profile core + latest 10 papers + latest 10 patents
     TOKEN_CAP_PUBLICATION_STATS: int = 1500
     TOKEN_CAP_DEPARTMENT_PROFILE: int = 2500
     TOKEN_CAP_LIST_DEPARTMENTS: int = 3000

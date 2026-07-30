@@ -31,6 +31,8 @@ ENABLED_TOOL_MODULES: frozenset[str] = frozenset({
     "experts_by_research_area",
     # Directory: faculty within a department / centre / school
     "list_department_faculty",
+    # Directory: one named faculty member's full profile (core + latest papers/IP)
+    "faculty_profile",         # get_faculty_profile
     # Chart-producing tools (see agent.api.chart_builder._CHART_BUILDERS)
     "research_trends",       # get_research_trends
     "compare_faculty",       # compare_faculty
