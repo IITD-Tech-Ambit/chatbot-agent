@@ -17,6 +17,7 @@ import asyncio
 import json
 import logging
 import re
+from difflib import SequenceMatcher
 from typing import Optional
 
 from langchain_core.tools import BaseTool, tool
@@ -43,53 +44,91 @@ def _name_tokens(name: str) -> list[str]:
     return [t for t in re.split(r"\s+", (name or "").strip()) if t]
 
 
+_TITLES = frozenset({"prof", "professor", "dr", "mr", "ms", "mrs", "the"})
+_MATCH_THRESHOLD = 0.6
+
+
+def _name_parts(name: str) -> list[str]:
+    """Ordered, lowercased name tokens with titles/punctuation stripped (keeps
+    order so the last token can be treated as the surname)."""
+    return [t for t in re.split(r"[^a-z0-9]+", (name or "").lower()) if t and t not in _TITLES]
+
+
+def _name_similarity(requested: str, candidate: str) -> float:
+    """Score how well faculty full name `candidate` matches the `requested` name.
+
+    Guards against picking a different person who merely shares a surname:
+      - Surnames must be CLOSE (SequenceMatcher ≥ 0.8) — this tolerates real
+        spelling variants like "Agarwal" vs "Agrawal".
+      - EVERY full given-name token (≥3 chars) in the request must appear in the
+        candidate's given names (equal or prefix). So "Ashwini K Agarwal" scores
+        0 against "A K Agarwala" (given name is just the initial "A"), but high
+        against "Ashwini K Agrawal". Initials match by first letter only.
+    Returns 0.0 when it is not a genuine match."""
+    req, cand = _name_parts(requested), _name_parts(candidate)
+    if not req or not cand:
+        return 0.0
+    sur_sim = SequenceMatcher(None, req[-1], cand[-1]).ratio()
+    if sur_sim < 0.8:
+        return 0.0
+    cand_firsts = cand[:-1]
+    for q in req[:-1]:
+        if len(q) >= 3:
+            ok = any(c == q or c.startswith(q) or (q.startswith(c) and len(c) >= 3) for c in cand_firsts)
+        else:  # an initial in the request — match by first letter
+            ok = any(c.startswith(q) for c in cand_firsts + [cand[-1]])
+        if not ok:
+            return 0.0
+    return 0.6 * sur_sim + 0.4
+
+
+def _best_sidebar_author(people: dict, requested: str) -> tuple[Optional[str], Optional[str]]:
+    """Resolve `requested` against the topic-scoped People sidebar. The sidebar
+    lists only faculty who actually have papers matching the query, and its
+    author_id is the one the Explore People list uses — so the deep-link
+    highlights the professor exactly like a click. Returns (author_id, name)."""
+    best_id = best_name = None
+    best_score = 0.0
+    for d in people.get("departments", []) or []:
+        for f in d.get("faculty", []) or []:
+            nm = f.get("name") or ""
+            s = _name_similarity(requested, nm)
+            if s > best_score and f.get("author_id") is not None:
+                best_score, best_id, best_name = s, f.get("author_id"), nm
+    if best_id is not None and best_score >= _MATCH_THRESHOLD:
+        return str(best_id), best_name
+    return None, None
+
+
 async def _resolve_author(faculty_repo, name: str) -> tuple[Optional[str], Optional[str]]:
-    """Resolve a professor's name to their Scopus author_id (+ canonical name)
-    so we can run the author-scoped search."""
+    """Fallback resolution via the faculty directory (topic-blind): a professor's
+    name → Scopus author_id (+ canonical name). Validates the match with
+    `_name_similarity` so a loose surname-only hit never silently returns the
+    WRONG person; returns (None, None) when nothing matches well enough."""
     toks = _name_tokens(name)
     if not toks:
         return None, None
     try:
-        docs = await faculty_repo.compound_name_search(toks, limit=3)
+        docs = await faculty_repo.compound_name_search(toks, limit=5)
     except Exception as exc:
         logger.warning("author name resolution failed: %s", exc)
         return None, None
+    best: tuple[str, str] | None = None
+    best_score = 0.0
     for d in docs:
         sc = d.get("scopus_id")
         scopus = sc[0] if isinstance(sc, list) and sc else (sc if isinstance(sc, str) else None)
-        if scopus:
-            full = " ".join(
-                x for x in (d.get("title"), d.get("firstName"), d.get("lastName")) if x
-            ).strip() or name
-            return str(scopus), full
+        if not scopus:
+            continue
+        cand = " ".join(x for x in (d.get("firstName"), d.get("lastName")) if x).strip()
+        s = _name_similarity(name, cand)
+        if s > best_score:
+            best_score = s
+            full = " ".join(x for x in (d.get("title"), d.get("firstName"), d.get("lastName")) if x).strip()
+            best = (str(scopus), full or name)
+    if best and best_score >= _MATCH_THRESHOLD:
+        return best
     return None, None
-
-
-_TITLES = frozenset({"prof", "professor", "dr", "mr", "ms", "mrs", "the"})
-
-
-def _clean_tokens(name: str) -> set[str]:
-    return {t for t in re.split(r"[^a-z0-9]+", (name or "").lower()) if t and t not in _TITLES}
-
-
-def _match_faculty_author_id(people: dict, name: str) -> Optional[str]:
-    """Find this professor in the faculty-for-query People list and return the
-    author_id the People sidebar uses — so the deep-link highlights (blues) the
-    professor exactly like a click. Requires a strong name match to avoid picking
-    a different person with the same surname."""
-    want = _clean_tokens(name)
-    if not want:
-        return None
-    best_id, best_score = None, 0.0
-    for d in people.get("departments", []) or []:
-        for f in d.get("faculty", []) or []:
-            fn = _clean_tokens(f.get("name", ""))
-            if not fn:
-                continue
-            score = len(want & fn) / len(want | fn)
-            if score > best_score:
-                best_score, best_id = score, f.get("author_id")
-    return best_id if best_score >= 0.5 else None
 
 
 def _client_sort(results: list[dict], sort_mode: str) -> list[dict]:
@@ -283,21 +322,25 @@ def build_tool(deps: ToolDeps) -> BaseTool:
 
         try:
             if author:
-                author_id, author_name = await _resolve_author(faculty_repo, author)
-                if not author_id:
-                    return json.dumps({"papers": [], "error": f'Could not find a professor named "{author}".'})
-                # Prefer the author_id the People sidebar uses for this query, so
-                # the button highlights the professor exactly like a click does.
-                # (Author-scope resolves either id to the same faculty.)
+                # Resolve against the topic-scoped People sidebar FIRST: it lists
+                # only faculty who actually have papers matching this query, its
+                # fuzzy match tolerates the user's spelling (e.g. Agarwal vs the
+                # stored Agrawal), and its author_id is the one Explore uses — so
+                # the deep-link highlights the professor. Fall back to the
+                # (topic-blind) directory search only if the sidebar has no match.
                 try:
-                    sidebar_id = _match_faculty_author_id(
-                        await client.faculty_for_query(query, mode="advanced"),
-                        author_name or author,
-                    )
-                    if sidebar_id:
-                        author_id = sidebar_id
+                    sidebar = await client.faculty_for_query(query, mode="advanced", filters=filters or None)
+                    author_id, author_name = _best_sidebar_author(sidebar, author)
                 except Exception as exc:
-                    logger.warning("sidebar author-id lookup failed: %s", exc)
+                    logger.warning("sidebar author lookup failed: %s", exc)
+                    author_id = author_name = None
+                if not author_id:
+                    author_id, author_name = await _resolve_author(faculty_repo, author)
+                if not author_id:
+                    return json.dumps({
+                        "papers": [],
+                        "error": f'Could not confidently identify a professor named "{author}" with work matching "{query}". Do not guess a different person.',
+                    })
                 data = await client.author_scope({**body, "author_id": author_id})
             else:
                 data, people_raw = await asyncio.gather(

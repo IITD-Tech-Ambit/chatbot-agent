@@ -27,7 +27,7 @@ B. **Content path** (no kerberos resolved):
 
 Query parsing
 ─────────────
-Faculty name and department are extracted by a cheap xAI LLM (QueryParser)
+Faculty name and department are extracted by a cheap Claude model (QueryParser)
 rather than hardcoded regex, so any natural-language phrasing is handled
 robustly.  QueryParser results are cached in-process so repeated queries are
 free.

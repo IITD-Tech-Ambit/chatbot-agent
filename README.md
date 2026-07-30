@@ -1,6 +1,6 @@
 # Research Ambit Chatbot Agent
 
-Agentic RAG chatbot for the [Research Ambit](https://researchambit.iitd.ac.in/) portal at IIT Delhi. Answers natural-language questions about faculty, departments, and publications by retrieving live data from MongoDB and OpenSearch, then synthesizing a streamed response with **xAI Grok** via a **LangGraph** agent.
+Agentic RAG chatbot for the [Research Ambit](https://researchambit.iitd.ac.in/) portal at IIT Delhi. Answers natural-language questions about faculty, departments, and publications by retrieving live data from MongoDB and OpenSearch, then synthesizing a streamed response with **Claude Haiku 4.5** (Anthropic) via a **LangGraph** agent.
 
 Built with **FastAPI**, **LangGraph**, and **LangChain**. Designed to power the floating research chat widget in `tech-ambit-explorer`.
 
@@ -38,11 +38,12 @@ In production, nginx (see `opensearch/deploy/nginx/nginx.conf`) proxies the chat
 ## Features
 
 - **LangGraph agent** — picks a tool, runs it, then answers grounded in the result (up to `MAX_TOOL_ROUNDS` tool rounds)
-- **23 auto-discovered tools** — papers, faculty, departments, stats, trends, comparisons, interdisciplinary search, **research-area classification** (thematic areas + domains), and patents/IP
-- **Dynamic query knobs** — the list/ranking tools take `sort_by` / `limit` / `year_from` / `year_to` so the bot honors custom requirements (e.g. "top 5 faculty by paper count in a theme") instead of a single fixed ordering
+- **10 allowlisted tools** — mirroring the three portal tabs: **Explore** (paper + IP search), **Research Areas** (experts by thematic area/domain), **Directory** (a unit's faculty, and one person's full profile), plus five chart/analytics tools (trends, publication & IP stats, department profile, faculty comparison). Tool files are auto-discovered but gated by an allowlist in `_registry.py`
+- **Dynamic query knobs** — the search/list tools take `sort` / `year_from` / `year_to` / `group_by_department` / `author` so the bot honors custom requirements (e.g. "most-cited papers on X since 2020 by Prof Y") instead of a single fixed ordering
+- **Every browseable list capped at 10** — each list tool returns a 10-item subset and a deep-link button; the full list lives on the corresponding page
 - **Grounded answers** — answer LLM runs at temperature 0 with strict anti-hallucination rules (never invent counts, entities, or rankings; say "I don't have that" instead of guessing)
 - **Hybrid RAG retrieval** — BM25 + kNN over OpenSearch, BGE reranking, MongoDB hydration, kerberos/department boosts (used by the paper-search tools)
-- **Fast paths** — regex guardrails (greeting/identity/injection) and structured queries (h-index, citations, dept) bypass the LLM
+- **Fast paths** — regex guardrails (greeting/identity/injection) and structured queries (h-index, citations, faculty counts, department lists) bypass the LLM
 - **Redis caching** — LLM response cache + embedding cache
 - **SSE streaming** — `thinking`, `status`, `sources`, `chart`, `token`, `done` events for the frontend
 - **Prometheus metrics** — exposed on the FastAPI app
@@ -60,7 +61,7 @@ In production, nginx (see `opensearch/deploy/nginx/nginx.conf`) proxies the chat
   - **Redis** — rate limiting + caches
   - **BGE embedding service** — typically `http://localhost:8000`
   - **Search API** — Node.js service from the `opensearch` repo, typically `http://localhost:3000`
-- **xAI API key** — [console.x.ai](https://console.x.ai/) (stored in `GROQ_API_KEY`; legacy env name)
+- **Anthropic API key** — [console.anthropic.com](https://console.anthropic.com/) (stored in `ANTHROPIC_API_KEY`)
 
 Connection details for MongoDB, OpenSearch, and Redis are usually shared with the rest of the stack via `opensearch/.env`.
 
@@ -73,7 +74,7 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 
 cp .env.example .env
-# Set GROQ_API_KEY (xAI key) and adjust service URLs
+# Set ANTHROPIC_API_KEY and adjust service URLs
 ```
 
 ### Run
@@ -149,28 +150,28 @@ Request
   → structured router (h-index / citations / dept → MongoDB direct, no LLM)
   → LLM cache check (Redis)
   → LangGraph agent:
-       agent node (Grok, temp=0, bind_tools)
-         → forces ≥1 tool call (injects search_papers if LLM returns none)
-       ToolNode (parallel execution, single round)
+       agent node (Claude Haiku 4.5, temp=0, bind_tools)
+         → empty tool_calls routes straight to the answer node
+       ToolNode (parallel execution, up to MAX_TOOL_ROUNDS)
          → context budget guard (truncate per-tool, cap total)
-       answer node (Grok, temp=0.3, tagged ["answer"] for SSE filtering)
+       answer node (Claude Haiku 4.5, temp=0, tagged ["answer"] for SSE filtering)
   → SSE stream (astream_events v2 → thinking/status/sources/chart/token/done)
   → cache answer in Redis
 ```
 
 ### Key design decisions
 
-- **Forced tool calling** — prevents hallucinated papers, faculty, or statistics
-- **Single tool round** — `MAX_TOOL_ROUNDS=1` enforced via `tool_rounds` in `AgentState`
-- **Two LLM instances** — `make_tool_llm()` (temp=0) for tool selection; `make_answer_llm()` (temp=0.3) for streaming answers
-- **xAI Grok via OpenAI-compatible API** — `https://api.x.ai/v1`; main model `grok-4.3`, cheap `grok-3-mini` for query parsing
+- **No forced tool call** — the agent node may answer directly (structural/naming questions are served from the inlined reference); empty `tool_calls` routes straight to the answer node
+- **Up to 2 tool rounds** — `MAX_TOOL_ROUNDS=2` (via `tool_rounds` in `AgentState`) lets the agent chain e.g. an IPC lookup into a refined patent query; it still stops as soon as the LLM emits no further tool call
+- **Two LLM instances** — `make_tool_llm()` (temp=0) for tool selection; `make_answer_llm()` (temp=0, tagged) for streaming answers
+- **Claude Haiku 4.5 via the Anthropic API** — `langchain-anthropic` `ChatAnthropic`; main + query-parser model `claude-haiku-4-5-20251001` (the parser calls the raw `anthropic` SDK directly)
 - **Repository layer** — tools depend on `FacultyRepository` / `ResearchRepository`; tests mock at this seam
 - **Kerberos linkage** — paper→faculty attribution uses indexed `kerberos` (email prefix), not Scopus `field_associated`
 
 ## Design: inform **and** navigate
 
 The bot is both an information assistant and a navigation aid for the portal. It
-answers briefly (a headline + a short preview of ~3–5 items), then hands the user
+answers briefly (a headline + a preview of up to 10 items), then hands the user
 off to the full page for the complete data. Its whole surface deliberately mirrors
 three portal tabs — **Explore** (papers/IP), **Research Areas** (the classification
 taxonomy), and **Directory** (departments/centres/schools) — so a chat answer and
@@ -194,19 +195,27 @@ Two mechanisms make this work without a tool call:
 ## Tools
 
 Tools are auto-discovered from `src/agent/tools/*.py`, gated by an allowlist in
-[`_registry.py`](src/agent/tools/_registry.py). **9 tools** are active:
+[`_registry.py`](src/agent/tools/_registry.py). **10 tools** are active:
 
 | Tool | Mirrors | What it does |
 |------|---------|--------------|
-| `search_research` | Explore (papers) | Same search-api + client-side transforms as the Explore page. Knobs: `year_from/to`, `sort` (relevance/citations), `group_by_department`, `author` (professor drill-down). Returns the top 10 papers **in the same order Explore shows**, plus the **People list** (`faculty.top_faculty` — top researchers by matching-paper count across the WHOLE result set; omitted on an author drill-down). |
-| `search_ip` | ExploreIP (patents) | Advanced patent/IP search. *(Not yet at parity with `search_research` — pending new IP backend APIs; only works where the `ip_documents` index exists.)* |
-| `experts_by_research_area` | Research Areas | Experts in a thematic area (required) → optional domain → optional department, with the area's paper/faculty counts. Wraps the `/taxonomy/*` endpoints. |
+| `search_research` | Explore (papers) | Same search-api + client-side transforms as the Explore page. Knobs: `year_from/to`, `sort` (relevance/citations), `group_by_department`, `author` (professor drill-down). Returns the top 10 papers **in the same order Explore shows**, plus the **People list** (`faculty.top_faculty` — top researchers by matching-paper count across the WHOLE result set; omitted on an author drill-down). Author resolution runs off the topic People sidebar (spelling-tolerant, highlightable id) with a validated directory fallback. |
+| `search_ip` | ExploreIP (patents) | Advanced patent/IP search. Knobs: `year_from/to`, `type_of_ip`, `field_of_invention`, `country`, `search_in` (incl. `inventor`), `primary_inventor_only`, `sort`. Top 10 filings + related inventors. *(Only works where the `ip_documents` index exists — absent in local dev.)* |
+| `experts_by_research_area` | Research Areas | Experts in a thematic area (required) → optional domain → optional department, with the area's paper/faculty counts. Top 10 experts. Wraps the `/taxonomy/*` endpoints. |
 | `list_department_faculty` | Directory | Faculty of a named **department / centre / school** (`category` arg). Returns the top 10 by h-index — the Directory page's order — plus total count and a button that opens that unit's expanded list on `/directory`. |
+| `get_faculty_profile` | Directory (one person) | One named faculty member's profile, assembled from the SAME endpoints the `/faculty/<kerberos>` page uses: resolves the name via `/directory/search` (first result), then returns designation, department, email, h-index, citations, research areas, Scopus/Scholar IDs, **latest 10 papers** (research-summary timeline) and **latest 10 patents/IP** (inventor-scoped IP search), each with totals. The professor's hyperlinked name IS the profile button. |
 | `get_research_trends` | — | A topic's publications over years → line chart (semantic retrieval) |
 | `get_publication_stats` | — | Paper counts by year / department / type → bar chart |
 | `get_department_profile` | — | One department's overview + publication chart |
 | `compare_faculty` | — | Two professors side by side → chart |
 | `get_ip_stats` | — | Patent/IP counts by year / department / type / country / IPC → chart |
+
+### Page coverage (what a human can do vs. the bot)
+
+- **Explore (papers):** covered — free-text/semantic search, relevance/citations sort, year range, group-by-department, and the click-a-professor author drill-down + People list. **Minor gaps:** no `document_type` filter (Article vs Conference Paper) and no field-restricted search (title/abstract-only) — facets are returned but not applied as filters.
+- **Explore (IP):** covered — topic/inventor search with year, IP type, field-of-invention, country, inventor-scope and primary-inventor filters. Live only where the IP index exists.
+- **Research Areas:** covered — the Thematic Area → Domain → (department) → experts picker and the area's paper/faculty counts. **Gap:** the per-expert "papers in this research area" drill-down (`/taxonomy/faculty/:kerberos/papers`) — the bot lists experts but can't yet scope one expert's papers to a theme/domain.
+- **Directory:** fully covered — unit lists (departments/centres/schools) and each department's HoD from the inlined reference; a unit's faculty via `list_department_faculty`; and one person's full profile via `get_faculty_profile`. The page's full paginated publication/patent timelines are surfaced as the latest 10 + the profile button.
 
 The 5 chart tools return structured data the frontend auto-renders. Everything a
 prior release did via ~20 finer-grained tools (faculty lookups, classification
@@ -232,15 +241,15 @@ See [`.env.example`](.env.example) for the full list. Key settings:
 | `EMBEDDING_SERVICE_URL` | `http://localhost:8000` | BGE embed + rerank service |
 | `SEARCH_API_URL` | `http://localhost:3001` | search-api: paper/IP search, faculty-for-query, taxonomy (`search-api:3001` in Docker) |
 | `BACKEND_API_URL` | `http://localhost:3002` | Main backend: Directory `/directory/grouped` (used at startup to build the department/centre/school reference) |
-| `GROQ_API_KEY` | — | **Required.** xAI API key (legacy env name) |
-| `GROQ_MODEL` | `grok-4.3` | Main LLM for tool selection + answers |
-| `GROQ_EXTRACT_MODEL` | `grok-3-mini` | Cheap model for query parsing |
+| `ANTHROPIC_API_KEY` | — | **Required.** Anthropic API key |
+| `ANTHROPIC_MODEL` | `claude-haiku-4-5-20251001` | Main LLM for tool selection + answers |
+| `ANTHROPIC_EXTRACT_MODEL` | `claude-haiku-4-5-20251001` | Cheap model for query parsing |
 | `MAX_TOOL_ROUNDS` | `2` | Agent tool-call rounds per query |
 | `CHAT_TOP_K` | `8` | Papers retrieved per search |
 | `CHAT_MAX_HISTORY_TURNS` | `5` | Recent conversation turns fed to the model (trimmed to `HISTORY_TOKEN_BUDGET`) |
 | `LLM_CACHE_TTL` | `90` | Response cache TTL (seconds; `0` = off) |
 
-> Answer LLM temperature is fixed at **0** (in `llm/groq_client.py`) for faithful, grounded replies — not env-configurable.
+> Answer LLM temperature is fixed at **0** (in `llm/anthropic_client.py`) for faithful, grounded replies — not env-configurable.
 | `ALLOWED_ORIGINS` | `*` | CORS origins (comma-separated or JSON array) |
 
 ## Project structure
@@ -259,7 +268,7 @@ chatbot-agent/
 │   │   └── sse_events.py           # typed SSE payloads
 │   ├── graph/                      # LangGraph state, nodes, builder
 │   ├── llm/
-│   │   ├── groq_client.py          # xAI Grok factory (tool + answer LLMs)
+│   │   ├── anthropic_client.py     # Claude Haiku 4.5 factory (tool + answer LLMs)
 │   │   └── prompts.py              # system prompt
 │   ├── tools/                      # auto-discovered @tool modules
 │   ├── repositories/               # FacultyRepository, ResearchRepository
