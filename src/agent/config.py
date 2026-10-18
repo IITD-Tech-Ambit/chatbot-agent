@@ -27,8 +27,10 @@ class Settings(BaseSettings):
     # a testing session. Set false only for local/dev testing.
     ENABLE_AUTH: bool = True
 
-    # CORS — comma-separated origins or JSON array; "*" allows all (dev default)
-    ALLOWED_ORIGINS: list[str] = ["*"]
+    GATEWAY_SHARED_SECRET: str = ""
+
+    # CORS — comma-separated origins or JSON array
+    ALLOWED_ORIGINS: list[str] = []
 
     @field_validator("ALLOWED_ORIGINS", mode="before")
     @classmethod
@@ -43,7 +45,7 @@ class Settings(BaseSettings):
             except _json.JSONDecodeError:
                 pass
             return [o.strip() for o in v.split(",") if o.strip()]
-        return ["*"]
+        return []
 
     MONGODB_URI: str = "mongodb://localhost:27017/research_db"
 
