@@ -250,7 +250,8 @@ See [`.env.example`](.env.example) for the full list. Key settings:
 | `LLM_CACHE_TTL` | `90` | Response cache TTL (seconds; `0` = off) |
 
 > Answer LLM temperature is fixed at **0** (in `llm/anthropic_client.py`) for faithful, grounded replies — not env-configurable.
-| `ALLOWED_ORIGINS` | `*` | CORS origins (comma-separated or JSON array) |
+| `ALLOWED_ORIGINS` | *(empty)* | CORS origins (comma-separated or JSON array); browsers reach the chatbot same-origin via the gateway |
+| `GATEWAY_SHARED_SECRET` | *(empty)* | Must match the api-gateway's value; when set, `x-user-*` without a match are rejected; empty trusts them (local dev) |
 
 ## Project structure
 

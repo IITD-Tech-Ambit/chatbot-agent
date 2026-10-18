@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import time
@@ -146,12 +147,21 @@ def _build_research_area_link(data: Any) -> dict | None:
     return payload
 
 
+def _from_gateway(request: Request) -> bool:
+    secret = settings.GATEWAY_SHARED_SECRET
+    # Empty secret trusts headers (local dev).
+    if not secret:
+        return True
+    given = request.headers.get("x-gateway-secret") or ""
+    return hmac.compare_digest(given.encode(), secret.encode())
+
+
 def require_user_id(request: Request) -> str:
     """Trusted identity injected by the api-gateway (x-user-id). The gateway
     strips any client-supplied copy, so an empty header means the request
     bypassed the gateway — reject it (defense in depth behind the 401 the
     gateway already returns)."""
-    user_id = (request.headers.get("x-user-id") or "").strip()
+    user_id = (request.headers.get("x-user-id") or "").strip() if _from_gateway(request) else ""
     if not user_id:
         raise HTTPException(
             status_code=401,
@@ -162,6 +172,8 @@ def require_user_id(request: Request) -> str:
 
 def is_requester_quota_exempt(request: Request) -> bool:
     """Trusted x-user-kerberos / x-user-category, also injected by the gateway."""
+    if not _from_gateway(request):
+        return False
     kerberos = request.headers.get("x-user-kerberos") or ""
     category = request.headers.get("x-user-category") or ""
     return is_quota_exempt(kerberos, category)
