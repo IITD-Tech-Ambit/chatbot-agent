@@ -170,6 +170,8 @@ python run.py
 
 `run.py` starts uvicorn at `http://localhost:3003` (override with `PORT` / `HOST`). Health: `GET /health`.
 
+This process does not send mail. It reads whatever `MONGODB_URI`, `OPENSEARCH_NODE`, `SEARCH_API_URL`, and `BACKEND_API_URL` point at. The defaults are local. Do not aim them at the Research Ambit VM: those ports are the production stores, and a write that reaches the production backend can email a faculty member. Regenerating eval fixtures (`eval/README.md`) reads the MongoDB in `.env`; use a local copy.
+
 ### Tests
 
 ```bash

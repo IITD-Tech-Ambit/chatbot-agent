@@ -18,7 +18,7 @@ cd chatbot-agent
 .venv/bin/python eval/scripts/build_golden_v3.py
 ```
 
-Requires `MONGODB_URI` in `.env` (papers in `researchmetadatascopus`, faculty in `faculties`, departments in `departments`).
+Requires `MONGODB_URI` in `.env` (papers in `researchmetadatascopus`, faculty in `faculties`, departments in `departments`). Use a local database. The MongoDB published on the Research Ambit VM is production.
 
 ## Query crafting rules
 
